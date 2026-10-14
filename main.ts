@@ -39,6 +39,7 @@ export default class Graph3DPlugin extends Plugin {
 		this.addCommand({
 			id: "toggle-2d",
 			name: "Toggle 2D mode",
+			hotkeys: [{ modifiers: ["Mod", "Alt"], key: "P" }],
 			callback: () => {
 				this.app.workspace
 					.getLeavesOfType(VIEW_TYPE_3D_GRAPH)

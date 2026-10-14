@@ -226,6 +226,9 @@ export class Graph3DView extends ItemView {
 
     this.registerDomEvent(this.graphContainer, "keydown", this.handleKeyDown.bind(this));
     this.registerDomEvent(this.graphContainer, "keyup", this.handleKeyUp.bind(this));
+    // fork fix: forget held movement keys when focus leaves the graph/window
+    this.registerDomEvent(this.graphContainer, "blur", () => this.pressedKeys.clear());
+    this.registerDomEvent(window, "blur", () => this.pressedKeys.clear());
 
     this.registerEvent(
       this.app.workspace.on("css-change", () => {
@@ -894,6 +897,10 @@ export class Graph3DView extends ItemView {
       .setDesc("Flatten the graph into a plane facing you; pan and zoom, no rotation. With the timeline it becomes a flat time chart.")
       .addToggle((t) => t.setValue(this.settings.flat2D).onChange(async (v) => { if (v !== this.settings.flat2D) await this.toggleFlat2D(); }));
     new Setting(container)
+      .setName("Two-finger drag pans")
+      .setDesc("Trackpad: two-finger drag moves the view, pinch zooms. Mouse wheels keep zooming. Space + drag always pans.")
+      .addToggle((t) => t.setValue(this.settings.trackpadPan).onChange(async (v) => { this.settings.trackpadPan = v; await this.plugin.saveSettings(); }));
+    new Setting(container)
       .setName("Time grid")
       .setDesc("Week or month frames behind the timeline, labelled.")
       .addDropdown((d) =>
@@ -1037,6 +1044,13 @@ export class Graph3DView extends ItemView {
   private handleKeyDown(event: KeyboardEvent) {
     const movementKeys = ["w", "a", "s", "d", "q", "e"];
     const key = event.key.toLowerCase();
+    // fork fix: never swallow shortcuts — with ⌘/Ctrl/⌥ held these are app
+    // commands (⌘Q quit, ⌘W close, ⌘S, ⌘E …), not camera moves. macOS also
+    // sends no keyup for a key pressed with ⌘, so it would stay "held".
+    if (event.metaKey || event.ctrlKey || event.altKey) {
+      this.pressedKeys.clear();
+      return;
+    }
 
     if (this.settings.useKeyboardControls && movementKeys.includes(key)) {
       event.preventDefault();
@@ -1107,6 +1121,90 @@ export class Graph3DView extends ItemView {
       }
     }
     this.physicsBridge.setPositions(this.dragSyncBuffer);
+  }
+
+  // ---- fork: pan the whole view — Space + drag, trackpad two-finger drag,
+  // and plain left-drag in 2D mode (where there is no rotation) -------------
+
+  /** move camera and orbit target together in the screen plane */
+  private panView(dxPx: number, dyPx: number) {
+    if (!this.graph) return;
+    const cam = this.graph.camera(), controls = this.graph.controls() as any;
+    if (!cam || !controls?.target) return;
+    const h = this.graphContainer.clientHeight || 1;
+    const dist = cam.position.distanceTo(controls.target);
+    const fov = ((cam as THREE.PerspectiveCamera).fov || 50) * Math.PI / 180;
+    const perPx = (2 * dist * Math.tan(fov / 2)) / h; // world units per screen pixel at the target
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrix, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(cam.matrix, 1);
+    const offset = right.multiplyScalar(-dxPx * perPx).add(up.multiplyScalar(dyPx * perPx));
+    cam.position.add(offset);
+    controls.target.add(offset);
+    this.updateLabels();
+  }
+
+  private setupPanControls() {
+    if (!this.graphContainer) return;
+    let spaceHeld = false, pointerOver = false, panning = false, last = { x: 0, y: 0 };
+    const isTyping = () => {
+      const a = document.activeElement as HTMLElement | null;
+      return !!a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+    };
+    const setCursor = () => this.graphContainer.setCssStyles({ cursor: panning ? "grabbing" : spaceHeld && pointerOver ? "grab" : "" });
+
+    this.registerDomEvent(this.graphContainer, "pointerenter", () => { pointerOver = true; setCursor(); });
+    this.registerDomEvent(this.graphContainer, "pointerleave", () => { pointerOver = false; setCursor(); });
+    this.registerDomEvent(window, "keydown", (e: KeyboardEvent) => {
+      if (e.code !== "Space" || !pointerOver || isTyping()) return;
+      e.preventDefault(); // no page scroll / button activation
+      if (!spaceHeld) { spaceHeld = true; setCursor(); }
+    });
+    this.registerDomEvent(window, "keyup", (e: KeyboardEvent) => {
+      if (e.code === "Space") { spaceHeld = false; setCursor(); }
+    });
+    this.registerDomEvent(window, "blur", () => { spaceHeld = false; panning = false; setCursor(); });
+
+    // capture phase: decide before the trackball / node-drag handlers see it
+    const onNode = (e: PointerEvent) => {
+      if (!this.instancedRenderer || this.currentPositions.length === 0) return false;
+      const rect = this.graphContainer.getBoundingClientRect();
+      const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -(((e.clientY - rect.top) / rect.height) * 2 - 1));
+      this.raycaster.setFromCamera(ndc, this.graph.camera());
+      return this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions) !== null;
+    };
+    this.registerDomEvent(this.graphContainer, "pointerdown", (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      if (!spaceHeld && !(this.settings.flat2D && !onNode(e))) return;
+      e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
+      panning = true; last = { x: e.clientX, y: e.clientY };
+      this.graphContainer.setPointerCapture?.(e.pointerId);
+      setCursor();
+    }, { capture: true });
+    this.registerDomEvent(this.graphContainer, "pointermove", (e: PointerEvent) => {
+      if (!panning) return;
+      e.stopImmediatePropagation(); e.stopPropagation();
+      this.panView(e.clientX - last.x, e.clientY - last.y);
+      last = { x: e.clientX, y: e.clientY };
+    }, { capture: true });
+    const end = (e: PointerEvent) => {
+      if (!panning) return;
+      e.stopImmediatePropagation(); e.stopPropagation();
+      panning = false;
+      this.graphContainer.releasePointerCapture?.(e.pointerId);
+      setCursor();
+    };
+    this.registerDomEvent(this.graphContainer, "pointerup", end, { capture: true });
+    this.registerDomEvent(this.graphContainer, "pointercancel", end, { capture: true });
+
+    // trackpad two-finger drag → pan; pinch (ctrlKey) and mouse wheels → zoom as before.
+    // A trackpad sends small, fractional or sideways deltas; a wheel big round steps.
+    this.registerDomEvent(this.graphContainer, "wheel", (e: WheelEvent) => {
+      if (!this.settings.trackpadPan || e.ctrlKey) return;
+      const trackpad = e.deltaMode === 0 && (e.deltaX !== 0 || !Number.isInteger(e.deltaY) || Math.abs(e.deltaY) < 40);
+      if (!trackpad) return;
+      e.preventDefault(); e.stopImmediatePropagation(); e.stopPropagation();
+      this.panView(-e.deltaX, -e.deltaY);
+    }, { capture: true, passive: false });
   }
 
   private setupPointerInteractions() {
@@ -1263,6 +1361,7 @@ export class Graph3DView extends ItemView {
       this.labelRenderer = new InstancedLabelRenderer(scene);
 
       this.setupPointerInteractions();
+      this.setupPanControls();
 
       this.graph.graphData({ nodes: [], links: [] });
 

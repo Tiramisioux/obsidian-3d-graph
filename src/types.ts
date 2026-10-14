@@ -74,6 +74,8 @@ export interface Graph3DPluginSettings {
   timelineGrid: "off" | "week" | "month" | "auto";
   /** fork: flatten the graph into a plane facing the camera, rotation locked */
   flat2D: boolean;
+  /** fork: trackpad two-finger drag pans the view (pinch still zooms) */
+  trackpadPan: boolean;
   useKeyboardControls: boolean;
   keyboardMoveSpeed: number;
   zoomOnClick: boolean;
@@ -132,6 +134,7 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   storyline: false,
   timelineGrid: "off",
   flat2D: false,
+  trackpadPan: true,
   useKeyboardControls: true,
   keyboardMoveSpeed: 2.0,
   zoomOnClick: true,

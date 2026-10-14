@@ -2,7 +2,7 @@
 
 A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Aryan Gupta, with fixes and extra ways to present your vault. Everything from the original works the same; this fork adds what's listed below.
 
-> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.6 · **based on:** 2.8.1
+> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.8 · **based on:** 2.8.1
 > It has its own id on purpose: a community-store update of the original can never overwrite it.
 
 ## What this fork adds
@@ -17,7 +17,9 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 | 🕰 | **Timeline layout** | Notes are pulled **vertically by date** — oldest at the top, newest at the bottom. **Reverse it** (newest at the top) with the toolbar's arrow button, **⌥⌘L**, or graph ⚙ → *Timeline → Newest at the top*. Links still cluster related notes, so it's a rough timeline, not a ruler. |
 | 🧵 | **Storyline** | A thin line threads through the notes in date order, so you can follow the story from first note to last. |
 | 🗓 | **Time grid** | In timeline view: faint frames at each **week** (labelled *v. 42*) or **month** (*okt. 2026*) — graph ⚙ → *Timeline → Time grid* (Off / Weeks / Months / Auto). The frames follow where the notes actually are; seen from above they stack like floors. |
-| ⬜ | **2D mode** | Flattens the graph into a plane facing you — pan and zoom, no rotation. With the timeline it becomes a flat time chart, the time grid seen as labelled lines. Toolbar button (square/box icon), graph ⚙ → *Timeline → 2D mode*, or the command *Toggle 2D mode*. |
+| ⬜ | **2D mode** | Flattens the graph into a plane facing you — pan and zoom, no rotation. With the timeline it becomes a flat time chart, the time grid seen as labelled lines. Toolbar button (square/box icon), **⌥⌘P**, or graph ⚙ → *Timeline → 2D mode*. |
+| ✋ | **Pan the view** | **Space + drag**, or **two-finger drag** on a trackpad (pinch still zooms; a mouse wheel keeps zooming). In 2D mode a plain drag on empty space pans too. Right-drag pans as before. Turn off trackpad panning under graph ⚙ → *Two-finger drag pans*. |
+| ⌨️ | **Shortcuts keep working in the graph** | Fixed: with keyboard camera controls on, ⌘Q, ⌘W, ⌘S, ⌘E … did nothing while the graph had focus (the Q/W/S/E/A/D movement keys swallowed them) and the camera could keep drifting afterwards. |
 | 🔀 | **Presentation switch** | A button in the graph's top-right toolbar (or **⌥⌘G**, command *Next presentation*) steps through **Network → Timeline → Timeline + storyline**. |
 | 🎯 | **Open a folder, hub or note in the graph** | Right-click a folder or note in the file list → **Open in 3D graph**, or press **⌘⇧G** for the note you're in. A folder shows everything inside it; a note or hub shows its **project** with the note **highlighted** (larger, highlight colour) and the camera on it — so you see where it sits in the structure. |
 
@@ -28,6 +30,8 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 | **⌘⇧G** | show the active note in the 3D graph — its project, the note highlighted |
 | **⌥⌘G** | next presentation: network → timeline → timeline + storyline |
 | **⌥⌘L** | reverse the timeline: newest at the top ↔ oldest at the top |
+| **⌥⌘P** | 2D mode on / off |
+| **Space + drag** · **two-finger drag** | pan the view |
 
 Defaults set by the fork; change them under *Settings → Hotkeys* (search "3D graph").
 
@@ -69,7 +73,7 @@ Tags have no date and aren't pulled; attachments are pulled but not part of the 
 | Label line width (characters) | Settings → Labels | 22 |
 | Label border opacity | Settings → Labels | 0.18 |
 | Timeline layout · Newest at the top · Timeline strength · Timeline length · Storyline | graph view ⚙ → *Timeline* | off · off · 0.08 · 600 · off |
-| 2D mode · Time grid | graph view ⚙ → *Timeline* | off · Off |
+| 2D mode · Two-finger drag pans · Time grid | graph view ⚙ → *Timeline* | off · on · Off |
 
 ## Install
 
