@@ -58,6 +58,10 @@ export interface Graph3DPluginSettings {
   labelWrapChars: number;
   /** fork: faint outline round the label pill (0 = none) */
   labelBorderOpacity: number;
+  /** fork: label card tinted with its node's colour, at rest (0–1) */
+  labelTintOpacity: number;
+  /** fork: the same tint while the node/label is hovered (0–1) */
+  labelTintHoverOpacity: number;
   /** fork: Obsidian page preview when hovering a note node */
   hoverPreview: boolean;
   /** fork: pull notes along the vertical axis by date */
@@ -72,6 +76,10 @@ export interface Graph3DPluginSettings {
   storyline: boolean;
   /** fork: week/month frames behind the timeline */
   timelineGrid: "off" | "week" | "month" | "auto";
+  /** fork: hovering a week/month frame lights it and its notes up */
+  timelineGridHover: boolean;
+  /** fork: the in-view switch panel is folded away */
+  switchPanelCollapsed: boolean;
   /** fork: flatten the graph into a plane facing the camera, rotation locked */
   flat2D: boolean;
   /** fork: trackpad two-finger drag pans the view (pinch still zooms) */
@@ -92,6 +100,8 @@ export interface Graph3DPluginSettings {
   centerForce: number;
   repelForce: number;
   linkForce: number;
+  /** fork: rest length of a link (WASM engine `link_distance`, D3 link distance) */
+  linkDistance: number;
   useWasmPhysics: boolean;
 }
 
@@ -120,7 +130,7 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   attachmentShape: NodeShape.Cube,
   showNodeLabels: true,
   showLabelsOnHoverOnly: false,
-  labelDistance: 150,
+  labelDistance: 300, // fork: was 150 — the layout is ~2× wider now (spacing below)
   labelFadeThreshold: 0.8,
   labelTextSize: 2.5,
   labelTextColorLight: "#000000",
@@ -132,6 +142,8 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   labelUnderscoresToSpaces: false,
   labelWrapChars: 22,
   labelBorderOpacity: 0.18,
+  labelTintOpacity: 0.15,
+  labelTintHoverOpacity: 0.45,
   hoverPreview: true,
   timelineLayout: false,
   timelineStrength: 0.08,
@@ -139,6 +151,8 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   timelineNewestTop: false,
   storyline: false,
   timelineGrid: "off",
+  timelineGridHover: true,
+  switchPanelCollapsed: false,
   flat2D: false,
   trackpadPan: true,
   showEvents: true,
@@ -150,9 +164,13 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   rotateSpeed: 1.0,
   panSpeed: 1.0,
   zoomSpeed: 1.0,
-  centerForce: 0.1,
-  repelForce: 10,
+  // fork: spacing for labels — neighbour distance ≈ one label width (~45
+  // units for a 22-character line). Was centre 0.1 / repel 10 / link
+  // distance 30 (engine default), which packed neighbours ~24 units apart.
+  centerForce: 0.02,
+  repelForce: 20,
   linkForce: 0.01,
+  linkDistance: 50,
   useWasmPhysics: true,
 };
 

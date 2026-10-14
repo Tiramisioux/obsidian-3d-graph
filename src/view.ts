@@ -14,7 +14,8 @@ import type Graph3DPlugin from "../main";
 import { PhysicsBridge } from "./physics/physics-bridge";
 import { createWorkerBlobUrl, getWasmArrayBuffer } from "./physics/wasm-loader";
 import { InstancedGraphRenderer } from "./rendering/graph-renderer";
-import { InstancedLabelRenderer } from "./rendering/label-renderer";
+import { colorToRgb01, InstancedLabelRenderer, labelStyleFrom } from "./rendering/label-renderer";
+import { SwitchPanel } from "./ui/flip-switch";
 import {
   ColorGroup,
   type Filter,
@@ -26,6 +27,13 @@ import {
 } from "./types";
 
 export const VIEW_TYPE_3D_GRAPH = "3d-graph-view";
+
+/** fork: a + (b − a)·t as "#rrggbb" (inputs "#hex" or "rgb(…)") */
+function mixColors(a: string, b: string, t: number): string {
+  const x = colorToRgb01(a), y = colorToRgb01(b);
+  const ch = (k: number) => Math.round((x[k] + (y[k] - x[k]) * t) * 255).toString(16).padStart(2, "0");
+  return `#${ch(0)}${ch(1)}${ch(2)}`;
+}
 
 interface ProcessedGraphLink {
   source: GraphNode;
@@ -127,9 +135,19 @@ export class Graph3DView extends ItemView {
   private storylineLine: THREE.Line | null = null;
   private timelineGridGroup: THREE.Group | null = null;
   private timelineGridLines: THREE.LineSegments | null = null;
-  private timelineGridStops: { y: number; sprite: THREE.Object3D }[] = [];
+  private timelineGridStops: { y: number; yEnd: number; t0: number; t1: number; sprite: THREE.Object3D }[] = [];
   private timelineGridTick = 0;
   private timelineSyncBuffer: Float32Array = new Float32Array(0);
+  // fork: time-grid hover — fitted frame placement, hovered frame, its notes
+  private timelineGridFit: { a: number; b: number; cx: number; cz: number; half: number } | null = null;
+  private timelineGridFill: THREE.Mesh | null = null;
+  private hoveredGridStop: number | null = null;
+  private periodNodeIds = new Set<string>();
+  private nodeDates: (number | null)[] = [];
+  // fork: physics settles → stop stepping (see onPhysicsTick)
+  private settleTicks = 0;
+  private switchPanel: SwitchPanel | null = null;
+  private lastGridUnit: "week" | "month" | "auto" = "auto";
 
   private frustum = new THREE.Frustum();
   private projScreenMatrix = new THREE.Matrix4();
@@ -261,26 +279,9 @@ export class Graph3DView extends ItemView {
       }
     });
 
-    // fork: presentation switch — network → timeline → timeline + storyline
-    this.presentationButton = controlsContainer.createEl("div", {
-      cls: "graph-3d-reset-toggle graph-3d-presentation-toggle",
-    });
-    this.refreshPresentationButton();
-    this.presentationButton.addEventListener("click", () => this.cyclePresentation());
-
-    // fork: reverse the timeline (newest at the top / bottom)
-    this.reverseButton = controlsContainer.createEl("div", {
-      cls: "graph-3d-reset-toggle graph-3d-reverse-toggle",
-    });
-    this.refreshReverseButton();
-    this.reverseButton.addEventListener("click", () => this.toggleNewestTop());
-
-    // fork: 2D / 3D switch
-    this.flatButton = controlsContainer.createEl("div", {
-      cls: "graph-3d-reset-toggle graph-3d-flat-toggle",
-    });
-    this.refreshFlatButton();
-    this.flatButton.addEventListener("click", () => this.toggleFlat2D());
+    // fork: the on/off options live in the switch panel (top left) instead
+    // of toolbar buttons
+    this.buildSwitchPanel();
 
     this.settingsToggleButton = controlsContainer.createEl("div", {
       cls: "graph-3d-settings-toggle",
@@ -294,6 +295,127 @@ export class Graph3DView extends ItemView {
       this.settingsPanel.classList.toggle("is-open");
     });
     this.renderSettingsPanel();
+  }
+
+  /** fork: the in-view switch panel — every on/off option of the view as a
+   *  flip switch, multi-value ones as segmented switches (src/ui/flip-switch.ts) */
+  private buildSwitchPanel() {
+    const st = this.settings;
+    if (st.timelineGrid !== "off") this.lastGridUnit = st.timelineGrid;
+    const panel = new SwitchPanel(this.contentEl, {
+      title: "Display",
+      collapsed: st.switchPanelCollapsed,
+      onCollapsedChange: async (c) => { st.switchPanelCollapsed = c; await this.plugin.saveSettings(); },
+      hotkeyHint: (id) => this.hotkeyHint(id),
+    });
+    this.switchPanel = panel;
+    const save = async () => { await this.plugin.saveSettings(); };
+    const redraw = async () => {
+      await this.plugin.saveSettings();
+      if (this.isSettingsPanelOpen()) this.renderSettingsPanel();
+      await this.updateData({ useCache: true, reheat: true });
+    };
+    const noTimeline = () => !st.timelineLayout;
+
+    panel.addSegmented({
+      label: "Presentation",
+      options: [
+        { value: "network", label: "Network" },
+        { value: "timeline", label: "Timeline" },
+        { value: "storyline", label: "Story" },
+      ],
+      get: () => this.presentationMode(),
+      set: (v) => this.setPresentation(v),
+      tooltip: "Presentation: network → timeline → timeline + storyline",
+      commandId: "cycle-presentation",
+    });
+    panel.addSwitch({
+      label: "2D mode",
+      get: () => st.flat2D,
+      set: async (v) => { if (v !== st.flat2D) await this.toggleFlat2D(); },
+      tooltip: "Flatten into a plane facing you (pan + zoom, no rotation)",
+      commandId: "toggle-2d",
+    });
+
+    panel.addHeading("Timeline");
+    panel.addSwitch({
+      label: "Timeline layout",
+      get: () => st.timelineLayout,
+      set: async (v) => { st.timelineLayout = v; await redraw(); },
+      tooltip: "Order notes vertically by date",
+    });
+    panel.addSwitch({
+      label: "Newest at the top",
+      get: () => st.timelineNewestTop,
+      set: async (v) => { if (v !== st.timelineNewestTop) await this.toggleNewestTop(); },
+      tooltip: "Reverse the timeline (newest at the top ↔ bottom)",
+      commandId: "toggle-newest-top",
+      disabled: noTimeline,
+    });
+    panel.addSwitch({
+      label: "Storyline",
+      get: () => st.storyline,
+      set: async (v) => { st.storyline = v; await redraw(); },
+      tooltip: "A line through the notes in date order",
+    });
+    panel.addSwitch({
+      label: "Time grid",
+      get: () => st.timelineGrid !== "off",
+      set: async (v) => { st.timelineGrid = v ? this.lastGridUnit : "off"; await redraw(); },
+      tooltip: "Week / month frames behind the timeline",
+      disabled: noTimeline,
+    });
+    panel.addSegmented({
+      label: "Grid",
+      options: [
+        { value: "week", label: "Week" },
+        { value: "month", label: "Month" },
+        { value: "auto", label: "Auto" },
+      ],
+      get: () => (st.timelineGrid === "off" ? this.lastGridUnit : st.timelineGrid),
+      set: async (v) => { this.lastGridUnit = v; st.timelineGrid = v; await redraw(); },
+      tooltip: "Time grid unit (auto: weeks up to ~4 months, else months)",
+      disabled: () => noTimeline() || st.timelineGrid === "off",
+    });
+    panel.addSwitch({
+      label: "Grid hover",
+      get: () => st.timelineGridHover,
+      set: async (v) => { st.timelineGridHover = v; if (!v) this.setHoveredGridStop(null); await save(); },
+      tooltip: "Hovering a week/month frame lights it and its notes up",
+      disabled: () => noTimeline() || st.timelineGrid === "off",
+    });
+
+    panel.addHeading("Show");
+    panel.addSwitch({
+      label: "Labels",
+      get: () => st.showNodeLabels,
+      set: async (v) => { st.showNodeLabels = v; await save(); this.updateLabels(); },
+    });
+    panel.addSwitch({
+      label: "Events",
+      get: () => st.showEvents,
+      set: async (v) => { st.showEvents = v; await save(); await this.updateData({ useCache: true }); },
+      tooltip: `Dated #${st.eventTag} todos as nodes of their own`,
+    });
+    panel.addSwitch({
+      label: "Page preview",
+      get: () => st.hoverPreview,
+      set: async (v) => { st.hoverPreview = v; if (!v) this.endHoverPreview(); await save(); },
+      tooltip: "Obsidian's page preview when hovering a note",
+    });
+    panel.addSwitch({
+      label: "Trackpad pan",
+      get: () => st.trackpadPan,
+      set: async (v) => { st.trackpadPan = v; await save(); },
+      tooltip: "Two-finger drag pans the view (pinch still zooms)",
+    });
+  }
+
+  /** fork: after any settings save (switch, command, settings tab, panel):
+   *  switches show the live state, and settled physics wakes up again */
+  public onSettingsSaved() {
+    this.switchPanel?.refresh();
+    this.wakePhysics();
   }
 
   public renderSettingsPanel() {
@@ -592,6 +714,7 @@ export class Graph3DView extends ItemView {
   private initTimeline(nodes: GraphNode[]) {
     this.clearStoryline();
     const dates = nodes.map((n) => this.nodeDate(n));
+    this.nodeDates = dates; // fork: for the time-grid period hover
     const known = dates.filter((d): d is number => d !== null);
     this.timelineTargets = new Float32Array(nodes.length).fill(NaN);
     this.storylineOrder = [];
@@ -649,6 +772,9 @@ export class Graph3DView extends ItemView {
         stops.push({ t: d.getTime(), label: d.toLocaleDateString("sv-SE", { month: "short", year: "numeric" }) });
     }
     if (!stops.length) return;
+    // fork: each frame stands for its period, up to the next frame (the last
+    // one up to the newest note)
+    const periods = stops.map((s, k) => ({ ...s, t1: k + 1 < stops.length ? stops[k + 1].t : hi + 1 }));
     // unit squares at the TARGET heights; updateTimelineGrid() fits them to
     // where the notes actually are (scale/offset in y, size in x/z)
     const pts: number[] = [];
@@ -670,13 +796,22 @@ export class Graph3DView extends ItemView {
     group.add(lines);
     this.timelineGridLines = lines;
     this.timelineGridStops = [];
-    for (const s of stops) {
+    for (const s of periods) {
       const sprite = new SpriteText(s.label, 4, this.getCssColor("--text-muted", "#666666"));
       (sprite as any).center?.set?.(1, 0.5);
       sprite.visible = false;
       group.add(sprite);
-      this.timelineGridStops.push({ y: yOf(s.t), sprite });
+      this.timelineGridStops.push({ y: yOf(s.t), yEnd: yOf(Math.min(s.t1, hi)), t0: s.t, t1: s.t1, sprite });
     }
+    // fork: faint fill for the hovered frame, in the frame's colour
+    const fill = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(ink), transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    fill.renderOrder = -1;
+    fill.visible = false;
+    group.add(fill);
+    this.timelineGridFill = fill;
     this.timelineGridGroup = group;
     this.graph.scene().add(group);
   }
@@ -744,6 +879,8 @@ export class Graph3DView extends ItemView {
     lines.scale.set(half, a, half);
     lines.position.set(cx, b, cz);
     lines.visible = true;
+    this.timelineGridFit = { a, b, cx, cz, half };
+    this.positionGridFill();
     const labelH = Math.max(2.5, half / 18);
     for (const s of this.timelineGridStops) {
       s.sprite.position.set(cx - half - 1, a * s.y + b, cz - half);
@@ -755,6 +892,12 @@ export class Graph3DView extends ItemView {
   private clearStoryline() {
     this.timelineGridLines = null;
     this.timelineGridStops = [];
+    this.timelineGridFill = null;
+    this.timelineGridFit = null;
+    if (this.hoveredGridStop !== null || this.periodNodeIds.size) {
+      this.hoveredGridStop = null;
+      this.periodNodeIds.clear();
+    }
     if (this.timelineGridGroup) {
       this.timelineGridGroup.parent?.remove(this.timelineGridGroup);
       this.timelineGridGroup.traverse((o: any) => { o.geometry?.dispose?.(); o.material?.map?.dispose?.(); o.material?.dispose?.(); });
@@ -765,6 +908,91 @@ export class Graph3DView extends ItemView {
     this.storylineLine.geometry.dispose();
     (this.storylineLine.material as THREE.Material).dispose();
     this.storylineLine = null;
+  }
+
+  // ---- fork: hoverable time-grid frames ------------------------------------
+
+  /** the frame under the current raycaster ray, or null. 3D: the ray meets
+   *  the frame's (horizontal) plane inside the square — nearest one wins. 2D:
+   *  the frames are seen edge-on, so the band from a frame to the next one
+   *  (its period) in the z = 0 plane counts. */
+  private pickGridStop(): number | null {
+    const fit = this.timelineGridFit;
+    if (!fit || !this.settings.timelineLayout || !this.settings.timelineGridHover || !this.timelineGridLines?.visible) return null;
+    const { a, b, cx, cz, half } = fit;
+    const o = this.raycaster.ray.origin, d = this.raycaster.ray.direction;
+    if (this.settings.flat2D) {
+      if (Math.abs(d.z) < 1e-6) return null;
+      const t = -o.z / d.z;
+      if (t <= 0) return null;
+      const x = o.x + d.x * t, y = o.y + d.y * t;
+      if (Math.abs(x - cx) > half) return null;
+      for (let k = 0; k < this.timelineGridStops.length; k++) {
+        const s = this.timelineGridStops[k];
+        const y0 = a * s.y + b, y1 = a * s.yEnd + b;
+        if (y >= Math.min(y0, y1) && y <= Math.max(y0, y1)) return k;
+      }
+      return null;
+    }
+    if (Math.abs(d.y) < 1e-6) return null;
+    let best: number | null = null, bestT = Infinity;
+    for (let k = 0; k < this.timelineGridStops.length; k++) {
+      const t = (a * this.timelineGridStops[k].y + b - o.y) / d.y;
+      if (t <= 0 || t >= bestT) continue;
+      const x = o.x + d.x * t, z = o.z + d.z * t;
+      if (Math.abs(x - cx) <= half && Math.abs(z - cz) <= half) { best = k; bestT = t; }
+    }
+    return best;
+  }
+
+  /** the hovered frame's fill: the square in 3D, the period band in 2D */
+  private positionGridFill() {
+    const fill = this.timelineGridFill, fit = this.timelineGridFit, k = this.hoveredGridStop;
+    if (!fill) return;
+    if (!fit || k === null || !this.timelineGridStops[k]) { fill.visible = false; return; }
+    const s = this.timelineGridStops[k];
+    const y0 = fit.a * s.y + fit.b;
+    if (this.settings.flat2D) {
+      const y1 = fit.a * s.yEnd + fit.b;
+      fill.rotation.set(0, 0, 0);
+      fill.position.set(fit.cx, (y0 + y1) / 2, -0.5);
+      fill.scale.set(2 * fit.half, Math.max(0.5, Math.abs(y1 - y0)), 1);
+    } else {
+      fill.rotation.set(-Math.PI / 2, 0, 0);
+      fill.position.set(fit.cx, y0, fit.cz);
+      fill.scale.set(2 * fit.half, 2 * fit.half, 1);
+    }
+    fill.visible = true;
+  }
+
+  /** hover a frame (null = none): fill it, and give the notes of its period
+   *  (events included) a partial highlight on node and label */
+  private setHoveredGridStop(k: number | null, redraw = true) {
+    if (k === this.hoveredGridStop) return;
+    this.hoveredGridStop = k;
+    this.periodNodeIds.clear();
+    const s = k !== null ? this.timelineGridStops[k] : null;
+    if (s) {
+      this.currentNodes.forEach((n, i) => {
+        const t = this.nodeDates[i];
+        if (t !== null && t !== undefined && t >= s.t0 && t < s.t1) this.periodNodeIds.add(n.id);
+      });
+    }
+    this.positionGridFill();
+    if (!redraw) return;
+    this.refreshLabelHighlights();
+    this.updateColors();
+  }
+
+  /** label highlight flags: 1 for the hovered node, ½ for the hovered period */
+  private refreshLabelHighlights() {
+    const partial = new Set<number>();
+    this.periodNodeIds.forEach((id) => {
+      const i = this.nodeIdToIndex.get(id);
+      if (i !== undefined) partial.add(i);
+    });
+    const hovered = this.hoveredNode ? (this.nodeIdToIndex.get(this.hoveredNode.id) ?? null) : null;
+    this.labelRenderer?.setHighlightedNode(hovered, partial);
   }
 
   // ---- fork: "Open in 3D graph" scope + focused source note -------------
@@ -827,7 +1055,6 @@ export class Graph3DView extends ItemView {
     return items.some((v) => values.includes(v));
   }
 
-  private presentationButton: HTMLElement | null = null;
 
   /** fork: " · ⌥⌘G" — the command's current hotkey as Obsidian prints it
    *  (follows the user's own bindings), or "" when it has none */
@@ -850,16 +1077,8 @@ export class Graph3DView extends ItemView {
         : "Drag: rotate · Space+drag / two-finger / right-drag: pan · Pinch / wheel: zoom · WASD QE: move · Click node: focus",
     );
   }
-  private flatButton: HTMLElement | null = null;
-  private reverseButton: HTMLElement | null = null;
-
   private refreshReverseButton() {
-    if (!this.reverseButton) return;
-    this.reverseButton.empty();
-    const top = this.settings.timelineNewestTop;
-    setIcon(this.reverseButton, top ? "arrow-up-narrow-wide" : "arrow-down-narrow-wide");
-    this.reverseButton.setAttribute("aria-label", (top ? "Timeline: newest at the top — click to reverse" : "Timeline: oldest at the top — click to reverse") + this.hotkeyHint("toggle-newest-top"));
-    this.reverseButton.toggleClass("is-inactive", !this.settings.timelineLayout);
+    this.switchPanel?.refresh(); // fork: the switch panel shows it
   }
 
   /** fork: flip the timeline — newest at the top ↔ oldest at the top */
@@ -872,10 +1091,7 @@ export class Graph3DView extends ItemView {
   }
 
   private refreshFlatButton() {
-    if (!this.flatButton) return;
-    this.flatButton.empty();
-    setIcon(this.flatButton, this.settings.flat2D ? "box" : "square");
-    this.flatButton.setAttribute("aria-label", (this.settings.flat2D ? "2D mode on — click for 3D" : "3D — click for 2D mode") + this.hotkeyHint("toggle-2d"));
+    this.switchPanel?.refresh(); // fork: the switch panel shows it
     this.refreshNavInfo();
   }
 
@@ -903,18 +1119,17 @@ export class Graph3DView extends ItemView {
   }
 
   private refreshPresentationButton() {
-    if (!this.presentationButton) return;
-    const mode = this.presentationMode();
-    const icon = { network: "share-2", timeline: "arrow-down-wide-narrow", storyline: "git-commit-vertical" }[mode];
-    const label = { network: "Presentation: network", timeline: "Presentation: timeline", storyline: "Presentation: timeline + storyline" }[mode];
-    this.presentationButton.empty();
-    setIcon(this.presentationButton, icon);
-    this.presentationButton.setAttribute("aria-label", label + " (click for next)" + this.hotkeyHint("cycle-presentation"));
+    this.switchPanel?.refresh(); // fork: the switch panel shows it
   }
 
   /** network → timeline → timeline + storyline → network */
   public async cyclePresentation() {
-    const next = { network: "timeline", timeline: "storyline", storyline: "network" }[this.presentationMode()];
+    const next = { network: "timeline", timeline: "storyline", storyline: "network" }[this.presentationMode()] as "network" | "timeline" | "storyline";
+    await this.setPresentation(next);
+  }
+
+  /** fork: one presentation directly (the segmented switch) */
+  public async setPresentation(next: "network" | "timeline" | "storyline") {
     this.settings.timelineLayout = next !== "network";
     this.settings.storyline = next === "storyline";
     await this.plugin.saveSettings();
@@ -963,6 +1178,14 @@ export class Graph3DView extends ItemView {
           .onChange(async (v) => { this.settings.timelineGrid = v as "off" | "week" | "month" | "auto"; await redraw(); }),
       );
     new Setting(container)
+      .setName("Hover time-grid frames")
+      .setDesc("Hovering a week/month frame fills it faintly and lights up the notes of that period.")
+      .addToggle((t) => t.setValue(this.settings.timelineGridHover).onChange(async (v) => {
+        this.settings.timelineGridHover = v;
+        if (!v) this.setHoveredGridStop(null);
+        await this.plugin.saveSettings();
+      }));
+    new Setting(container)
       .setName("Storyline")
       .setDesc("A line through the notes in date order.")
       .addToggle((t) => t.setValue(this.settings.storyline).onChange(async (v) => { this.settings.storyline = v; await redraw(); }));
@@ -981,7 +1204,7 @@ export class Graph3DView extends ItemView {
 
     new Setting(container).setName("Label distance").addSlider((s) =>
       s
-        .setLimits(50, 500, 10)
+        .setLimits(50, 1500, 10) // fork: was 50–500
         .setValue(this.settings.labelDistance)
         .setDynamicTooltip()
         .onChange(async (v) => {
@@ -1078,11 +1301,22 @@ export class Graph3DView extends ItemView {
 
     new Setting(container).setName("Repel force").addSlider((slider) =>
       slider
-        .setLimits(0, 20, 0.1)
+        .setLimits(0, 40, 0.1) // fork: was 0–20
         .setValue(this.settings.repelForce)
         .setDynamicTooltip()
         .onChange(async (value) => {
           this.settings.repelForce = value;
+          await forceChangeHandler();
+        }),
+    );
+
+    new Setting(container).setName("Link distance").addSlider((slider) =>
+      slider
+        .setLimits(10, 150, 5)
+        .setValue(this.settings.linkDistance)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          this.settings.linkDistance = value;
           await forceChangeHandler();
         }),
     );
@@ -1174,6 +1408,7 @@ export class Graph3DView extends ItemView {
       }
     }
     this.physicsBridge.setPositions(this.dragSyncBuffer);
+    this.wakePhysics(); // fork: a settled layout reacts to the drag
   }
 
   // ---- fork: pan the whole view — Space + drag, trackpad two-finger drag,
@@ -1193,6 +1428,7 @@ export class Graph3DView extends ItemView {
     const offset = right.multiplyScalar(-dxPx * perPx).add(up.multiplyScalar(dyPx * perPx));
     cam.position.add(offset);
     controls.target.add(offset);
+    this.setHoveredGridStop(null); // fork: no frame hover while panning
     this.updateLabels();
   }
 
@@ -1311,6 +1547,7 @@ export class Graph3DView extends ItemView {
     this.registerDomEvent(this.graphContainer, "pointerleave", () => {
       if (this.hoveredNode) this.handleNodeHover(null);
       else this.endHoverPreview();
+      this.setHoveredGridStop(null); // fork
     });
 
     this.registerDomEvent(this.graphContainer, "pointermove", (e: PointerEvent) => {
@@ -1341,6 +1578,10 @@ export class Graph3DView extends ItemView {
         if (node !== this.hoveredNode) {
           this.handleNodeHover(node, e);
         }
+        // fork: time-grid frame under the pointer — not while a button is
+        // held (rotating), and a node/label wins over the frame beneath it
+        if (!node && !isPointerDown && e.buttons === 0) this.setHoveredGridStop(this.pickGridStop());
+        else if (isPointerDown || e.buttons !== 0) this.setHoveredGridStop(null);
       }
     });
 
@@ -1614,30 +1855,11 @@ export class Graph3DView extends ItemView {
               createWorkerBlobUrl(),
               newData.nodes.length,
               new Uint32Array(edgesList),
-              {
-                gravity: this.settings.centerForce,
-                repulsion: this.settings.repelForce * 40.0,
-                attraction: this.settings.linkForce,
-              },
+              this.physicsParams(),
             )
             .then(() => {
-              this.physicsBridge.onTick((positions) => {
-                this.applyTimeline(positions);
-                this.currentPositions = positions;
-                this.updateStoryline(positions);
-                this.updateTimelineGrid(positions);
-                this.instancedRenderer?.updatePositions(positions);
-                if (this.settings.showNodeLabels && !this.settings.performanceMode) {
-                  this.labelRenderer?.updateVisibilityAndOcclusion(
-                    this.graph.camera(),
-                    positions,
-                    this.settings,
-                    this.hoveredNode ? this.hoveredNode.id : null,
-                    this.highlightedNodes,
-                  );
-                }
-                this.handleKeyboardMovement();
-              });
+              this.settleTicks = 0;
+              this.physicsBridge.onTick((positions) => this.onPhysicsTick(positions));
               this.physicsBridge.start();
             })
             .catch((err) => {
@@ -1700,6 +1922,9 @@ export class Graph3DView extends ItemView {
         colorMap.set(idx, this.getNodeColor(node));
       });
       this.instancedRenderer.updateNodeColors(colorMap);
+      // fork: labels carry their node's colour; theme/settings colours as uniforms
+      this.labelRenderer?.setStyle(labelStyleFrom(this.settings, this.highlightColor()));
+      this.labelRenderer?.setNodeColors(this.currentNodes.map((n) => this.getNodeColor(n, true)));
 
       const linkHighlightColor = this.settings.useThemeColors
         ? this.getCssColor("--graph-node-focused", this.settings.colorHighlight)
@@ -1874,13 +2099,27 @@ export class Graph3DView extends ItemView {
     }
   }
 
-  private getNodeColor(node: GraphNode): string {
-    const { useThemeColors, colorHighlight, colorNode, colorTag, colorAttachment } = this.settings;
+  /** fork: the theme-aware highlight colour */
+  private highlightColor(): string {
+    return this.settings.useThemeColors
+      ? this.getCssColor("--graph-node-focused", this.settings.colorHighlight)
+      : this.settings.colorHighlight;
+  }
 
-    if (this.highlightedNodes.has(node.id) || node.id === this.focusNodeId) {
-      return useThemeColors
-        ? this.getCssColor("--graph-node-focused", colorHighlight)
-        : colorHighlight;
+  /** `forLabel` (fork): the colour a label carries — the node's own colour
+   *  even while it is the hovered node (the label shows hover by a stronger
+   *  tint of that colour), and without the time-grid period mix */
+  private getNodeColor(node: GraphNode, forLabel = false): string {
+    const { useThemeColors, colorNode, colorTag, colorAttachment } = this.settings;
+
+    const hoveredSelf = forLabel && this.hoveredNode?.id === node.id && node.id !== this.selectedNode;
+    if ((this.highlightedNodes.has(node.id) && !hoveredSelf) || node.id === this.focusNodeId) {
+      return this.highlightColor();
+    }
+
+    // fork: notes in the hovered time-grid period — a partial highlight
+    if (!forLabel && this.periodNodeIds.has(node.id)) {
+      return mixColors(this.getNodeColor(node, true), this.highlightColor(), 0.45);
     }
 
     if (node.type === NodeType.Event) return this.settings.colorEvent; // fork: meetings
@@ -1952,17 +2191,81 @@ export class Graph3DView extends ItemView {
     this.updateColors();
   }
 
+  /** fork: WASM engine parameters from the settings (link distance included —
+   *  upstream left it at the engine's 30) */
+  private physicsParams() {
+    return {
+      gravity: this.settings.centerForce,
+      repulsion: this.settings.repelForce * 40.0,
+      attraction: this.settings.linkForce,
+      link_distance: this.settings.linkDistance,
+    };
+  }
+
+  /** fork: one physics tick. The worker's buffer is copied into a buffer of
+   *  the view's own: with SharedArrayBuffer the worker writes the next step
+   *  into the shared one while the view still reads it (pointer picking,
+   *  camera-driven label passes), and the ping-pong fallback hands the
+   *  buffer back to the worker — detached, length 0 — right after this
+   *  callback, so anything reading `currentPositions` between ticks saw an
+   *  empty graph (labels hidden on camera moves, hover lost): flicker. */
+  private onPhysicsTick(positions: Float32Array) {
+    this.applyTimeline(positions);
+    const own = this.currentPositions;
+    let maxDelta = Infinity;
+    if (own.length === positions.length) {
+      maxDelta = 0;
+      for (let i = 0; i < positions.length; i++) {
+        const d = Math.abs(positions[i] - own[i]);
+        if (d > maxDelta) maxDelta = d;
+      }
+      own.set(positions);
+    } else {
+      this.currentPositions = new Float32Array(positions);
+    }
+    const pos = this.currentPositions;
+    this.updateStoryline(pos);
+    this.updateTimelineGrid(pos);
+    this.instancedRenderer?.updatePositions(pos);
+    if (this.settings.showNodeLabels && !this.settings.performanceMode) {
+      this.labelRenderer?.updateVisibilityAndOcclusion(
+        this.graph.camera(),
+        pos,
+        this.settings,
+        this.hoveredNode ? this.hoveredNode.id : null,
+        this.highlightedNodes,
+      );
+    }
+    this.handleKeyboardMovement();
+    // fork fix (twitching): the bridge requested a new step after every tick
+    // forever, and the timeline / 2D pull resets the engine's energy on each
+    // sync, so it never counted as converged — the nodes kept being nudged.
+    // Once nothing has moved more than SETTLE_EPS for SETTLE_TICKS ticks the
+    // layout is at rest: stop stepping. Drag, settings and data changes wake it.
+    this.settleTicks = maxDelta < Graph3DView.SETTLE_EPS ? this.settleTicks + 1 : 0;
+    if (this.settleTicks >= Graph3DView.SETTLE_TICKS) {
+      this.settleTicks = 0;
+      this.physicsBridge.stop();
+    }
+  }
+  private static readonly SETTLE_EPS = 0.01; // world units per tick (a label is ~45 wide)
+  private static readonly SETTLE_TICKS = 30;
+
+  /** fork: resume a settled simulation */
+  public wakePhysics() {
+    if (!this.settings.useWasmPhysics) return;
+    this.settleTicks = 0;
+    this.physicsBridge.start();
+  }
+
   public updateForces() {
     if (!this.isGraphInitialized) return;
 
     const { centerForce, repelForce, linkForce, useWasmPhysics } = this.settings;
 
     if (useWasmPhysics) {
-      this.physicsBridge.setParams({
-        gravity: centerForce,
-        repulsion: repelForce * 40.0,
-        attraction: linkForce,
-      });
+      this.physicsBridge.setParams(this.physicsParams());
+      this.wakePhysics();
     } else {
       if (this.centerForce) {
         this.centerForce.strength(centerForce);
@@ -1972,6 +2275,7 @@ export class Graph3DView extends ItemView {
       }
       if (this.linkForce) {
         this.linkForce.strength(linkForce);
+        this.linkForce.distance?.(this.settings.linkDistance); // fork
       }
     }
   }
@@ -2154,9 +2458,10 @@ export class Graph3DView extends ItemView {
       this.hoveredNode.fz = this.hoveredNode.z;
     }
 
-    // fork: light up the hovered node's label too
-    const hlColor = this.settings.useThemeColors ? this.getCssColor("--graph-node-focused", this.settings.colorHighlight) : this.settings.colorHighlight;
-    this.labelRenderer?.setHighlightedNode(node ? (this.nodeIdToIndex.get(node.id) ?? null) : null, hlColor);
+    // fork: light up the hovered node's label too (in its own colour); a
+    // node under the pointer takes priority over a time-grid frame
+    if (node) this.setHoveredGridStop(null);
+    this.refreshLabelHighlights();
     if (node && event) this.showHoverPreview(node, event);
     else this.endHoverPreview();
 
@@ -2181,14 +2486,17 @@ export class Graph3DView extends ItemView {
 
     if (this.instancedRenderer) {
       const colorMap = new Map<number, string>();
+      const labelColors = new Map<number, string>(); // fork
       nodesToUpdate.forEach((nodeId) => {
         const idx = this.nodeIdToIndex.get(nodeId);
         const node = this.nodeMap.get(nodeId);
         if (idx !== undefined && node) {
           colorMap.set(idx, this.getNodeColor(node));
+          labelColors.set(idx, this.getNodeColor(node, true));
         }
       });
       this.instancedRenderer.updateNodeColors(colorMap);
+      this.labelRenderer?.setNodeColors(labelColors);
 
       const linkHighlightColor = this.settings.useThemeColors
         ? this.getCssColor("--graph-node-focused", this.settings.colorHighlight)

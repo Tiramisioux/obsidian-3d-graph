@@ -436,7 +436,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
     );
     new Setting(containerEl).setName("Label distance").addSlider((s) =>
       s
-        .setLimits(50, 500, 10)
+        .setLimits(50, 1500, 10) // fork: was 50–500; the spaced-out layout needs more
         .setValue(this.plugin.settings.labelDistance)
         .setDynamicTooltip()
         .onChange(async (v) => {
@@ -534,6 +534,35 @@ export class Graph3DSettingsTab extends PluginSettingTab {
             this.plugin.settings.labelBorderOpacity = v;
             await this.plugin.saveSettings();
             this.triggerUpdate({ redrawData: true, useCache: true });
+          }),
+      );
+    // fork: label cards tinted with their node's colour
+    new Setting(containerEl)
+      .setName("Label tint")
+      .setDesc("How strongly a label's card takes on its node's colour (colour groups, types, events). White nodes keep a plain card. 0 = no tint.")
+      .addSlider((s) =>
+        s
+          .setLimits(0, 1, 0.01)
+          .setValue(this.plugin.settings.labelTintOpacity)
+          .setDynamicTooltip()
+          .onChange(async (v) => {
+            this.plugin.settings.labelTintOpacity = v;
+            await this.plugin.saveSettings();
+            this.triggerUpdate({});
+          }),
+      );
+    new Setting(containerEl)
+      .setName("Label tint on hover")
+      .setDesc("The same tint while the note or its label is hovered — clearly stronger than at rest.")
+      .addSlider((s) =>
+        s
+          .setLimits(0, 1, 0.01)
+          .setValue(this.plugin.settings.labelTintHoverOpacity)
+          .setDynamicTooltip()
+          .onChange(async (v) => {
+            this.plugin.settings.labelTintHoverOpacity = v;
+            await this.plugin.saveSettings();
+            this.triggerUpdate({});
           }),
       );
     new Setting(containerEl).setName("Label Background Opacity").addSlider((s) =>
@@ -644,7 +673,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
       );
     const forceSettingHandler = async (
       value: number,
-      setting: "centerForce" | "repelForce" | "linkForce",
+      setting: "centerForce" | "repelForce" | "linkForce" | "linkDistance",
     ) => {
       this.plugin.settings[setting] = value;
       await this.plugin.saveSettings();
@@ -666,7 +695,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
     );
     new Setting(containerEl).setName("Repel force").addSlider((s) =>
       s
-        .setLimits(0, 20, 0.1)
+        .setLimits(0, 40, 0.1) // fork: was 0–20
         .setValue(this.plugin.settings.repelForce)
         .setDynamicTooltip()
         .onChange(async (v) => {
@@ -682,5 +711,18 @@ export class Graph3DSettingsTab extends PluginSettingTab {
           await forceSettingHandler(v, "linkForce");
         }),
     );
+    // fork: rest length of a link
+    new Setting(containerEl)
+      .setName("Link distance")
+      .setDesc("Rest length of a link. With labels on, about one label width keeps linked notes' labels apart.")
+      .addSlider((s) =>
+        s
+          .setLimits(10, 150, 5)
+          .setValue(this.plugin.settings.linkDistance)
+          .setDynamicTooltip()
+          .onChange(async (v) => {
+            await forceSettingHandler(v, "linkDistance");
+          }),
+      );
   }
 }

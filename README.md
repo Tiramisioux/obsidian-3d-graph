@@ -2,7 +2,7 @@
 
 A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Aryan Gupta, with fixes and extra ways to present your vault. Everything from the original works the same; this fork adds what's listed below.
 
-> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.11 · **based on:** 2.8.1
+> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.12 · **based on:** 2.8.1
 > It has its own id on purpose: a community-store update of the original can never overwrite it.
 
 ## What this fork adds
@@ -12,16 +12,21 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 | 🐞 | **Labels that actually show** | Fixed: with a filter or a small graph, node labels were invisible, and in large graphs they could show the wrong names. Nothing to set. ([reported upstream: #16](https://github.com/Apoo711/obsidian-3d-graph/issues/16)) |
 | ✂️ | **Shorter labels** | *Settings → Strip from label (regex)* removes a pattern from note labels, e.g. a Zettelkasten timestamp; *Underscores as spaces* tidies the rest. Search still matches the full file name; tag labels are left alone. |
 | 🏷 | **Label cards that don't blur together** | Each label is a rounded card with a faint outline (*Settings → Label border opacity*), and a nearer label covers a farther one instead of the texts mixing. Set *Label Background Opacity* to 1 for fully opaque cards. The label settings (size, colours, opacity) now apply immediately instead of after a reload. |
+| 🎨 | **Labels in their note's colour** | Each label's card is faintly tinted with its node's colour — the same colour the node gets from colour groups, note types, meetings or the focus highlight — and its outline takes that colour too. Hovering makes the tint clearly stronger. White nodes keep a plain card. The text stays dark on light cards (light on dark ones), whatever the tint. Strengths: *Settings → Label tint* (0.15) and *Label tint on hover* (0.45). |
+| 📏 | **Room for the labels** | New default spacing so neighbouring labels overlap far less: neighbours sit about one label width (~45 units, a 22-character line) apart instead of ~24. *Center force* 0.1 → 0.02, *Repel force* 10 → 20 (slider now up to 40), new *Link distance* 50 (the engine used a fixed 30), *Label distance* 150 → 300 so labels still show in the bigger layout. Existing vaults keep their stored values — set them under *Settings → Forces*. |
+| 🐞 | **No more flicker** | Fixed: overlapping labels flickered (cards nearly at the same depth — always in 2D mode — won and lost against each other frame by frame); labels are now drawn far → near instead. Labels could also blink off while turning the view, because the view read the physics worker's buffer after handing it back. And the layout never came to rest with the timeline or 2D mode on: it now stops computing once nothing moves, and wakes up on drag, settings or data changes. |
 | ↩️ | **Labels on several lines** | Long labels wrap at word boundaries — about 22 characters per line, up to 3 lines (*Settings → Label line width*; 0 = one line, cut at 40 characters). |
 | 🖱 | **Clickable labels** | Labels act like their node: **hover** a label to light it up (card tinted in the highlight colour, slightly larger) and see the page preview; **click** it to fly to the note; drag it to move the note. |
 | 👁 | **Page preview on hover** | Hover a note node — or its label — to see Obsidian's page preview. Needs the core *Page preview* plugin. Turn it off under *Settings → Page preview on hover*, or require a modifier key under *Settings → Page preview → 3D Graph*. |
-| 🕰 | **Timeline layout** | Notes are pulled **vertically by date** — oldest at the top, newest at the bottom. **Reverse it** (newest at the top) with the toolbar's arrow button, **⌥⌘L**, or graph ⚙ → *Timeline → Newest at the top*. Links still cluster related notes, so it's a rough timeline, not a ruler. |
+| 🕰 | **Timeline layout** | Notes are pulled **vertically by date** — oldest at the top, newest at the bottom. **Reverse it** (newest at the top) with the *Newest at the top* switch, **⌥⌘L**, or graph ⚙ → *Timeline → Newest at the top*. Links still cluster related notes, so it's a rough timeline, not a ruler. |
 | 🧵 | **Storyline** | A thin line threads through the notes in date order, so you can follow the story from first note to last. |
-| 🗓 | **Time grid** | In timeline view: faint frames at each **week** (labelled *v. 42*) or **month** (*okt. 2026*) — graph ⚙ → *Timeline → Time grid* (Off / Weeks / Months / Auto). The frames follow where the notes actually are; seen from above they stack like floors. |
-| ⬜ | **2D mode** | Flattens the graph into a plane facing you — pan and zoom, no rotation. With the timeline it becomes a flat time chart, the time grid seen as labelled lines. Toolbar button (square/box icon), **⌥⌘P**, or graph ⚙ → *Timeline → 2D mode*. |
+| 🗓 | **Time grid** | In timeline view: faint frames at each **week** (labelled *v. 42*) or **month** (*okt. 2026*) — the *Time grid* switch + *Week / Month / Auto*, or graph ⚙ → *Timeline → Time grid*. The frames follow where the notes actually are; seen from above they stack like floors. |
+| 🔦 | **Hover a week or month** | Point at a time-grid frame: it fills faintly, and the notes of that period (meetings included) light up a little — node and label, weaker than a hovered note. A note or label under the pointer wins over the frame. In 2D mode the frames are seen edge-on, so the band from one frame to the next counts. Switch: *Grid hover* (graph ⚙ → *Timeline → Hover time-grid frames*). |
+| ⬜ | **2D mode** | Flattens the graph into a plane facing you — pan and zoom, no rotation. With the timeline it becomes a flat time chart, the time grid seen as labelled lines. The *2D mode* switch, **⌥⌘P**, or graph ⚙ → *Timeline → 2D mode*. |
 | ✋ | **Pan the view** | **Space + drag**, or **two-finger drag** on a trackpad (pinch still zooms; a mouse wheel keeps zooming). In 2D mode a plain drag on empty space pans too. Right-drag pans as before. Turn off trackpad panning under graph ⚙ → *Two-finger drag pans*. |
 | ⌨️ | **Shortcuts keep working in the graph** | Fixed: with keyboard camera controls on, ⌘Q, ⌘W, ⌘S, ⌘E … did nothing while the graph had focus (the Q/W/S/E/A/D movement keys swallowed them) and the camera could keep drifting afterwards. |
-| 🔀 | **Presentation switch** | A button in the graph's top-right toolbar (or **⌥⌘G**, command *Next presentation*) steps through **Network → Timeline → Timeline + storyline**. |
+| 🎚 | **Switch panel** | Top left in the graph: the view's on/off options as flip switches (Obsidian's own toggle look) — **Presentation** (*Network / Timeline / Story*), **2D mode**, **Timeline layout**, **Newest at the top**, **Storyline**, **Time grid** + *Week / Month / Auto*, **Grid hover**, **Labels**, **Events**, **Page preview**, **Trackpad pan**. A switch always shows the live state — a hotkey or the settings flip it visibly — and its tooltip shows the hotkey. Click *Display* to fold the panel away (remembered). Replaces the presentation, reverse and 2D toolbar buttons. |
+| 🔀 | **Presentation switch** | *Presentation* in the switch panel, or **⌥⌘G** (command *Next presentation*), steps through **Network → Timeline → Timeline + storyline**. |
 | 🎨 | **Colour by note type** | Two new colour-group rules (*Settings → Color Groups*): **`prop: key=value`** matches a frontmatter property (`prop: typ=hub`, several values with `\|`: `prop: källa=email\|mail`, or just `prop: status` for "has the property"), and **`name: <regex>`** matches the node's name — `name: .` is a catch-all for "every other note". The first group that matches wins, so put the catch-all last. See the example below. |
 | 📅 | **Meetings as events** | A todo with the meeting tag (default `#röd`) and a due date — `- [ ] möte med Anna #röd [due:: 2026-10-20 10:00]` — becomes a **node of its own**, linked to its note, labelled *20 okt möte med Anna* and placed at **its own date** on the timeline and storyline. Hover it for the note's preview, double-click to open the note. If you keep a meeting note (`typ: möte`, named with the meeting's timestamp and the same text), the note stands in for the todo and no extra node is drawn. *Settings → Meetings*: on/off, tag, colour (red). |
 | 🎯 | **Open a folder, hub or note in the graph** | Right-click a folder or note in the file list → **Open in 3D graph**, or press **⌘⇧G** for the note you're in. A folder shows everything inside it; a note or hub shows its **project** with the note **highlighted** (larger, highlight colour) and the camera on it — so you see where it sits in the structure. |
@@ -36,7 +41,7 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 | **⌥⌘P** | 2D mode on / off |
 | **Space + drag** · **two-finger drag** | pan the view |
 
-Defaults set by the fork; change them under *Settings → Hotkeys* (search "3D graph"). Hovering a toolbar button shows its current shortcut (your own binding if you changed it), and the help line at the bottom of the graph lists the mouse and trackpad gestures.
+Defaults set by the fork; change them under *Settings → Hotkeys* (search "3D graph"). Hovering a switch shows its current shortcut (your own binding if you changed it), and the help line at the bottom of the graph lists the mouse and trackpad gestures.
 
 ### What "Open in 3D graph" shows
 
@@ -68,6 +73,7 @@ Groups as in the author's vault (first match wins):
 | `prop: typ=person` | blue | person notes |
 | `prop: källa=email\|mail` | yellow | imported emails |
 | `prop: typ=möte` | red | meeting notes |
+| `prop: källa=clipping` · `tag: clippings` | grey | web clippings |
 | `name: .` | white | every other note |
 
 Meeting todos (`#röd` + a date) are red through *Settings → Meetings → Meeting color*, not through a group.
@@ -91,6 +97,11 @@ Tags have no date and aren't pulled; attachments are pulled but not part of the 
 | Page preview on hover | Settings → Interaction | on |
 | Label line width (characters) | Settings → Labels | 22 |
 | Label border opacity | Settings → Labels | 0.18 |
+| Label tint · Label tint on hover | Settings → Labels | 0.15 · 0.45 |
+| Link distance | Settings → Forces, graph ⚙ → *Forces* | 50 |
+| Hover time-grid frames | graph ⚙ → *Timeline*, switch panel | on |
+| Switch panel folded | the panel's *Display* header | off (open) |
+| *Changed defaults:* Center force · Repel force · Label distance | Settings → Forces / Labels | 0.02 · 20 · 300 (were 0.1 · 10 · 150) |
 | Timeline layout · Newest at the top · Timeline strength · Timeline length · Storyline | graph view ⚙ → *Timeline* | off · off · 0.08 · 600 · off |
 | 2D mode · Two-finger drag pans · Time grid | graph view ⚙ → *Timeline* | off · on · Off |
 | Meeting todos as events · Meeting tag · Meeting color | Settings → Meetings | on · `röd` · red `#d32a32` |
@@ -118,7 +129,7 @@ npx tsc -noEmit -skipLibCheck && node esbuild.config.mjs production
 
 The Rust/WASM physics engine is prebuilt in `src/physics/wasm-data.ts`; `wasm-pack` (`npm run build`) is only needed when changing `crates/`.
 
-Fork changes, by file: label fix, label formatting and line wrapping (`labelLines`) in `src/rendering/label-renderer.ts`; page preview, timeline, storyline, time grid (`buildTimelineGrid`, `updateTimelineGrid`), 2D mode (`toggleFlat2D`), presentation switch and the focus highlight (`showScope`, `flyToNode`) in `src/view.ts`; new settings in `src/types.ts` / `src/settings.ts`; hover source, commands, hotkeys, the file-menu item and the folder/hub/note scope (`scopeFor`) in `main.ts`. Live-testing helpers for developers: `scripts/dev/`.
+Fork changes, by file: label fix, label formatting and line wrapping (`labelLines`), mask atlas + per-label colour/tint and far → near draw order (`setNodeColors`, `setStyle`, `updateVisibilityAndOcclusion`) in `src/rendering/label-renderer.ts`; the switch panel component in `src/ui/flip-switch.ts`; physics tick / settle-stop (`onPhysicsTick`, `wakePhysics`), time-grid hover (`pickGridStop`, `setHoveredGridStop`) and the switch panel (`buildSwitchPanel`) in `src/view.ts`; page preview, timeline, storyline, time grid (`buildTimelineGrid`, `updateTimelineGrid`), 2D mode (`toggleFlat2D`), presentation switch and the focus highlight (`showScope`, `flyToNode`) in `src/view.ts`; new settings in `src/types.ts` / `src/settings.ts`; hover source, commands, hotkeys, the file-menu item and the folder/hub/note scope (`scopeFor`) in `main.ts`. Live-testing helpers for developers: `scripts/dev/`.
 
 ---
 

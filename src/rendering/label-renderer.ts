@@ -28,15 +28,18 @@ const LABEL_VERT = /* glsl */ `
   attribute vec2 instanceScale;
   attribute vec4 instanceUV;
   attribute float instanceOpacity;
-  attribute float instanceHighlight; // fork: hovered label
+  attribute float instanceHighlight; // fork: 1 = hovered, 0.5 = time-grid period, 0 = none
+  attribute vec4 instanceColor;      // fork: node colour (rgb) + tint weight (a; 0 = white)
 
   varying vec2 vUv;
   varying float vOpacity;
   varying float vHighlight;
+  varying vec4 vColor;
 
   void main() {
     vOpacity = instanceOpacity;
     vHighlight = instanceHighlight;
+    vColor = instanceColor;
     vUv = vec2(instanceUV.x + uv.x * instanceUV.z, instanceUV.y + (1.0 - uv.y) * instanceUV.w);
 
     // Billboarding in view space: quad faces the camera
@@ -46,31 +49,57 @@ const LABEL_VERT = /* glsl */ `
   }
 `;
 
+/* fork: the atlas holds masks, not colours — red = card, green = text,
+   blue = outline, alpha = card coverage. Colours are applied here, so every
+   label can carry its node's colour without one atlas glyph per colour. */
 const LABEL_FRAG = /* glsl */ `
   precision mediump float;
 
   uniform sampler2D uAtlas;
-  uniform vec3 uHighlightColor; // fork
+  uniform vec3 uBgColor;
+  uniform float uBgOpacity;
+  uniform vec3 uTextColor;
+  uniform float uBorderOpacity;
+  uniform float uTintRest;
+  uniform float uTintHover;
+  uniform vec3 uHighlightColor; // hover tint for nodes without an own colour (white)
 
   varying vec2 vUv;
   varying float vOpacity;
   varying float vHighlight;
+  varying vec4 vColor;
+
+  float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
   void main() {
     if (vOpacity < 0.005) {
       discard;
     }
-    vec4 texColor = texture2D(uAtlas, vUv);
-    if (texColor.a < 0.01) {
+    vec4 m = texture2D(uAtlas, vUv);
+    if (m.a < 0.01) {
       discard;
     }
-    vec3 rgb = texColor.rgb;
-    // fork: hovered label — tint the light card background, keep dark text
-    if (vHighlight > 0.5) {
-      float light = step(0.5, dot(rgb, vec3(0.3333)));
-      rgb = mix(rgb, uHighlightColor, 0.38 * light);
-    }
-    gl_FragColor = vec4(rgb, max(texColor.a, vHighlight * 0.95) * vOpacity);
+    float h = clamp(vHighlight, 0.0, 1.0);
+    float w = vColor.a;
+    vec3 tintColor = mix(uHighlightColor, vColor.rgb, w);
+    // faint own-colour card at rest, clearly stronger on hover
+    float amount = mix(uTintRest * w, uTintHover, h);
+    vec3 card = mix(uBgColor, tintColor, amount);
+    float cardA = max(uBgOpacity, 0.95 * h);
+
+    vec3 borderColor = mix(uTextColor, tintColor, w);
+    float border = m.b * mix(uBorderOpacity, max(uBorderOpacity, 0.55), w);
+
+    // text keeps its contrast against a (mostly) opaque tinted card; on
+    // see-through cards the scene behind decides, so the theme colour stays
+    vec3 text = uTextColor;
+    float lc = lum(card);
+    if (cardA >= 0.6 && abs(lc - lum(text)) < 0.45) text = lc > 0.5 ? vec3(0.08) : vec3(0.96);
+
+    vec3 rgb = mix(card, borderColor, border);
+    rgb = mix(rgb, text, m.g);
+    float a = cardA + (1.0 - cardA) * max(m.g, border);
+    gl_FragColor = vec4(rgb, m.a * a * vOpacity);
   }
 `;
 
@@ -125,6 +154,46 @@ export function labelLines(name: string, settings: Graph3DPluginSettings, maxLin
   return lines.length ? lines : [name];
 }
 
+/** fork: what the label shader needs besides the atlas — set from the
+ *  settings and the theme, no atlas rebuild needed */
+export interface LabelStyle {
+  textColor: string;
+  bgColor: string;
+  bgOpacity: number;
+  borderOpacity: number;
+  tintRest: number;
+  tintHover: number;
+  highlightColor: string;
+}
+
+export function labelStyleFrom(settings: Graph3DPluginSettings, highlightColor: string): LabelStyle {
+  const isDarkMode = document.body.classList.contains("theme-dark");
+  return {
+    textColor: isDarkMode ? settings.labelTextColorDark : settings.labelTextColorLight,
+    bgColor: settings.labelBackgroundColor,
+    bgOpacity: settings.labelBackgroundOpacity,
+    borderOpacity: settings.labelBorderOpacity,
+    tintRest: settings.labelTintOpacity,
+    tintHover: settings.labelTintHoverOpacity,
+    highlightColor,
+  };
+}
+
+/** fork: "#rrggbb" / "rgb(r, g, b)" → raw 0–1 channels (the shaders take
+ *  colours as they are, like the node shader) */
+export function colorToRgb01(color: string): [number, number, number] {
+  const c = (color || "").trim();
+  if (c.startsWith("rgb")) {
+    const m = c.match(/\d+(\.\d+)?/g);
+    if (m && m.length >= 3) return [+m[0] / 255, +m[1] / 255, +m[2] / 255];
+  }
+  let hex = c.replace("#", "");
+  if (hex.length === 3) hex = hex.split("").map((x) => x + x).join("");
+  const n = parseInt(hex.substring(0, 6), 16);
+  if (isNaN(n)) return [0.5, 0.5, 0.5];
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
 export class InstancedLabelRenderer {
   private scene: THREE.Scene;
   private atlasCanvas: HTMLCanvasElement;
@@ -140,16 +209,32 @@ export class InstancedLabelRenderer {
 
   public instancedMesh: THREE.Mesh | null = null;
   private instancedGeo: THREE.InstancedBufferGeometry | null = null;
+  // GPU attributes, in DRAW order (slot), only the visible labels, farthest
+  // first — fork: sorted back to front instead of depth-written (see below)
   private translationAttr: THREE.InstancedBufferAttribute | null = null;
   private scaleAttr: THREE.InstancedBufferAttribute | null = null;
   private uvAttr: THREE.InstancedBufferAttribute | null = null;
   private opacityAttr: THREE.InstancedBufferAttribute | null = null;
   private highlightAttr: THREE.InstancedBufferAttribute | null = null; // fork
+  private colorAttr: THREE.InstancedBufferAttribute | null = null; // fork
   private material: THREE.ShaderMaterial | null = null;
 
   private labels: LabelItem[] = [];
   private labelCount = 0;
   private positionsStride: 4 | 3 = 4;
+
+  // fork: per-LABEL data (index = label = node index), copied into the
+  // draw-order slots on every visibility pass
+  private labelScale = new Float32Array(0);
+  private labelUV = new Float32Array(0);
+  private labelColor = new Float32Array(0); // rgb + tint weight
+  private labelHighlight = new Float32Array(0);
+  private labelTrans = new Float32Array(0);
+  private labelOpacity = new Float32Array(0);
+  private labelDistSq = new Float32Array(0);
+  private slotLabel = new Int32Array(0); // slot → label
+  private visibleCount = 0;
+  private style: LabelStyle | null = null;
 
   // Frustum & raycast occlusion reusable objects
   private projScreenMatrix = new THREE.Matrix4();
@@ -167,7 +252,7 @@ export class InstancedLabelRenderer {
     this.atlasCtx = ctx;
   }
 
-  /** fork: label under a ray — intersects the ray with each visible label's
+  /** fork: label under a ray — intersects the ray with each drawn label's
    *  camera-facing quad (the vertex shader billboards it in view space);
    *  returns the node index of the nearest hit, or null */
   public getNodeIndexAtLabel(raycaster: THREE.Raycaster, camera: THREE.Camera): number | null {
@@ -182,30 +267,54 @@ export class InstancedLabelRenderer {
     if (Math.abs(denom) < 1e-6) return null;
     const c = new THREE.Vector3(), p = new THREE.Vector3();
     let best: number | null = null, bestT = Infinity;
-    for (let i = 0; i < this.labelCount; i++) {
-      if (op[i] < 0.05) continue;
-      c.set(tr[i * 3], tr[i * 3 + 1], tr[i * 3 + 2]);
+    for (let s = 0; s < this.visibleCount; s++) {
+      if (op[s] < 0.05) continue;
+      c.set(tr[s * 3], tr[s * 3 + 1], tr[s * 3 + 2]);
       const t = c.clone().sub(o).dot(fwd) / denom;
       if (t <= 0 || t >= bestT) continue;
       p.copy(d).multiplyScalar(t).add(o).sub(c);
-      if (Math.abs(p.dot(right)) <= sc[i * 2] / 2 && Math.abs(p.dot(up)) <= sc[i * 2 + 1] / 2) {
-        best = this.labels[i].nodeIndex; bestT = t;
+      if (Math.abs(p.dot(right)) <= sc[s * 2] / 2 && Math.abs(p.dot(up)) <= sc[s * 2 + 1] / 2) {
+        best = this.labels[this.slotLabel[s]].nodeIndex; bestT = t;
       }
     }
     return best;
   }
 
-  /** fork: highlight the label of one node (null = none) */
-  public setHighlightedNode(nodeIndex: number | null, color?: string) {
-    if (!this.highlightAttr) return;
-    const arr = this.highlightAttr.array as Float32Array;
-    arr.fill(0);
-    if (nodeIndex !== null) {
-      const i = this.labels.findIndex((l) => l.nodeIndex === nodeIndex);
-      if (i >= 0) arr[i] = 1;
+  /** fork: highlight the label of one node (null = none) — the hover state.
+   *  Labels in `partial` (node indices) get a half highlight (time-grid
+   *  period). Takes effect with the next visibility pass. */
+  public setHighlightedNode(nodeIndex: number | null, partial?: Set<number>) {
+    this.labelHighlight.fill(0);
+    if (partial) for (const i of partial) if (i >= 0 && i < this.labelCount) this.labelHighlight[i] = 0.5;
+    if (nodeIndex !== null && nodeIndex >= 0 && nodeIndex < this.labelCount) this.labelHighlight[nodeIndex] = 1;
+  }
+
+  /** fork: each label's colour = its node's resolved colour (index = node
+   *  index). Near-white colours get tint weight 0 → today's plain card. */
+  public setNodeColors(colors: Map<number, string> | string[]) {
+    const entries: Iterable<[number, string]> = Array.isArray(colors) ? colors.entries() : colors;
+    for (const [i, color] of entries) {
+      if (i < 0 || i >= this.labelCount) continue;
+      const [r, g, b] = colorToRgb01(color);
+      const min = Math.min(r, g, b);
+      const weight = 1 - Math.min(1, Math.max(0, (min - 0.9) / 0.08)); // ≥ ~0.98 in every channel → 0
+      this.labelColor.set([r, g, b, weight], i * 4);
     }
-    if (color && this.material) (this.material.uniforms.uHighlightColor.value as THREE.Color).set(color);
-    this.highlightAttr.needsUpdate = true;
+    this.writeSlots();
+  }
+
+  /** fork: theme / settings colours and tint strengths */
+  public setStyle(style: LabelStyle) {
+    this.style = style;
+    if (!this.material) return;
+    const u = this.material.uniforms;
+    (u.uBgColor.value as THREE.Vector3).fromArray(colorToRgb01(style.bgColor));
+    (u.uTextColor.value as THREE.Vector3).fromArray(colorToRgb01(style.textColor));
+    (u.uHighlightColor.value as THREE.Vector3).fromArray(colorToRgb01(style.highlightColor));
+    u.uBgOpacity.value = style.bgOpacity;
+    u.uBorderOpacity.value = style.borderOpacity;
+    u.uTintRest.value = style.tintRest;
+    u.uTintHover.value = style.tintHover;
   }
 
   public initLabels(
@@ -240,14 +349,24 @@ export class InstancedLabelRenderer {
     this.labelCount = this.labels.length;
     if (this.labelCount === 0) return;
 
+    const n = this.labelCount;
+    this.labelScale = new Float32Array(n * 2);
+    this.labelUV = new Float32Array(n * 4);
+    this.labelColor = new Float32Array(n * 4); // rgb 0 + weight 0 = plain card until coloured
+    this.labelHighlight = new Float32Array(n);
+    this.labelTrans = new Float32Array(n * 3);
+    this.labelOpacity = new Float32Array(n);
+    this.labelDistSq = new Float32Array(n);
+    this.slotLabel = new Int32Array(n);
+    this.visibleCount = 0;
+
     this.buildAtlas(settings);
     this.setupInstancedMesh(settings);
   }
 
   private buildAtlas(settings: Graph3DPluginSettings): void {
-    const isDarkMode = document.body.classList.contains("theme-dark");
-    const textColor = isDarkMode ? settings.labelTextColorDark : settings.labelTextColorLight;
-    const bgColor = this.hexToRgba(settings.labelBackgroundColor, settings.labelBackgroundOpacity);
+    // fork: masks only (see LABEL_FRAG) — colours are uniforms
+    const CARD = "rgb(255, 0, 0)", TEXT = "rgb(0, 255, 0)", BORDER = "rgb(0, 0, 255)";
 
     // Count unique labels to choose optimal texture size
     const uniqueTexts = new Set<string>();
@@ -286,7 +405,7 @@ export class InstancedLabelRenderer {
     // Create a fallback slot at (2, 2)
     const fallbackBoxW = 40;
     const fallbackBoxH = fontSize + paddingY * 2;
-    this.atlasCtx.fillStyle = bgColor;
+    this.atlasCtx.fillStyle = CARD;
     this.drawRoundedRect(this.atlasCtx, 2, 2, fallbackBoxW, fallbackBoxH, borderRadius);
     this.atlasCtx.fill();
     this.atlasCursorX += fallbackBoxW + 2;
@@ -309,7 +428,7 @@ export class InstancedLabelRenderer {
       const lines = labelLines(this.labels[i].name, settings);
       const text = lines.join("\n");
 
-      const cacheKey = `${text}_${textColor}_${bgColor}`;
+      const cacheKey = text;
       if (this.labelCache.has(cacheKey)) continue;
 
       const lineHeight = Math.round(fontSize * 1.15);
@@ -333,20 +452,18 @@ export class InstancedLabelRenderer {
       const y = this.atlasCursorY;
 
       // Draw background rounded pill
-      this.atlasCtx.fillStyle = bgColor;
+      this.atlasCtx.fillStyle = CARD;
       this.drawRoundedRect(this.atlasCtx, x, y, boxWidth, boxHeight, borderRadius);
       this.atlasCtx.fill();
-      // fork: faint rounded outline in the text colour, so overlapping labels
-      // read as separate cards
-      if (settings.labelBorderOpacity > 0) {
-        this.atlasCtx.strokeStyle = this.hexToRgba(textColor, settings.labelBorderOpacity);
-        this.atlasCtx.lineWidth = 1.5;
-        this.drawRoundedRect(this.atlasCtx, x + 0.75, y + 0.75, boxWidth - 1.5, boxHeight - 1.5, borderRadius);
-        this.atlasCtx.stroke();
-      }
+      // fork: rounded outline mask (its opacity and colour come from the
+      // shader), so overlapping labels read as separate cards
+      this.atlasCtx.strokeStyle = BORDER;
+      this.atlasCtx.lineWidth = 1.5;
+      this.drawRoundedRect(this.atlasCtx, x + 0.75, y + 0.75, boxWidth - 1.5, boxHeight - 1.5, borderRadius);
+      this.atlasCtx.stroke();
 
       // Draw text
-      this.atlasCtx.fillStyle = textColor;
+      this.atlasCtx.fillStyle = TEXT;
       lines.forEach((line, k) => {
         this.atlasCtx.fillText(line, x + paddingX, y + paddingY + fontSize / 2 + k * lineHeight);
       });
@@ -412,83 +529,101 @@ export class InstancedLabelRenderer {
     this.instancedGeo.index = quadGeo.index;
     this.instancedGeo.setAttribute("position", quadGeo.getAttribute("position"));
     this.instancedGeo.setAttribute("uv", quadGeo.getAttribute("uv"));
-    this.instancedGeo.instanceCount = this.labelCount;
+    this.instancedGeo.instanceCount = 0; // fork: = visible labels, set per pass
     quadGeo.dispose();
 
-    const translationData = new Float32Array(this.labelCount * 3);
-    const scaleData = new Float32Array(this.labelCount * 2);
-    const uvData = new Float32Array(this.labelCount * 4);
-    const opacityData = new Float32Array(this.labelCount);
-
-    const isDarkMode = document.body.classList.contains("theme-dark");
-    const textColor = isDarkMode ? settings.labelTextColorDark : settings.labelTextColorLight;
-    const bgColor = this.hexToRgba(settings.labelBackgroundColor, settings.labelBackgroundOpacity);
+    const n = this.labelCount;
     const baseHeight = settings.labelTextSize * 2.2;
 
-    for (let i = 0; i < this.labelCount; i++) {
+    for (let i = 0; i < n; i++) {
       const text = labelLines(this.labels[i].name, settings).join("\n");
-      const cacheKey = `${text}_${textColor}_${bgColor}`;
       const glyph =
-        this.labelCache.get(cacheKey) ||
+        this.labelCache.get(text) ||
         this.labelCache.get("__FALLBACK__") ||
         this.labelCache.values().next().value;
 
       if (glyph) {
-        uvData[i * 4] = glyph.u;
-        uvData[i * 4 + 1] = glyph.v;
-        uvData[i * 4 + 2] = glyph.w;
-        uvData[i * 4 + 3] = glyph.h;
+        this.labelUV[i * 4] = glyph.u;
+        this.labelUV[i * 4 + 1] = glyph.v;
+        this.labelUV[i * 4 + 2] = glyph.w;
+        this.labelUV[i * 4 + 3] = glyph.h;
 
         // fork: taller box for wrapped labels (same text size), lifted by the
         // extra height so it doesn't cover its own node
         const h = baseHeight * (glyph.pixelHeight / 28); // 28 px = one-line box (20 px font + 2×4 padding)
         const w = h * glyph.aspect;
         this.labels[i].lift = (h - baseHeight) / 2;
-        scaleData[i * 2] = w;
-        scaleData[i * 2 + 1] = h;
+        this.labelScale[i * 2] = w;
+        this.labelScale[i * 2 + 1] = h;
       }
-      opacityData[i] = 0.0;
     }
 
-    this.translationAttr = new THREE.InstancedBufferAttribute(translationData, 3, false);
-    this.translationAttr.setUsage(THREE.DynamicDrawUsage);
-
-    this.scaleAttr = new THREE.InstancedBufferAttribute(scaleData, 2, false);
-    this.scaleAttr.setUsage(THREE.StaticDrawUsage);
-
-    this.uvAttr = new THREE.InstancedBufferAttribute(uvData, 4, false);
-    this.uvAttr.setUsage(THREE.StaticDrawUsage);
-
-    this.opacityAttr = new THREE.InstancedBufferAttribute(opacityData, 1, false);
-    this.opacityAttr.setUsage(THREE.DynamicDrawUsage);
+    const dyn = (data: Float32Array, size: number) => {
+      const a = new THREE.InstancedBufferAttribute(data, size, false);
+      a.setUsage(THREE.DynamicDrawUsage);
+      return a;
+    };
+    this.translationAttr = dyn(new Float32Array(n * 3), 3);
+    this.scaleAttr = dyn(new Float32Array(n * 2), 2);
+    this.uvAttr = dyn(new Float32Array(n * 4), 4);
+    this.opacityAttr = dyn(new Float32Array(n), 1);
+    this.highlightAttr = dyn(new Float32Array(n), 1); // fork: hover / period highlight
+    this.colorAttr = dyn(new Float32Array(n * 4), 4); // fork: node colour + tint weight
 
     this.instancedGeo.setAttribute("instanceTranslation", this.translationAttr);
     this.instancedGeo.setAttribute("instanceScale", this.scaleAttr);
     this.instancedGeo.setAttribute("instanceUV", this.uvAttr);
     this.instancedGeo.setAttribute("instanceOpacity", this.opacityAttr);
-    // fork: per-label hover highlight
-    this.highlightAttr = new THREE.InstancedBufferAttribute(new Float32Array(this.labelCount), 1, false);
-    this.highlightAttr.setUsage(THREE.DynamicDrawUsage);
     this.instancedGeo.setAttribute("instanceHighlight", this.highlightAttr);
+    this.instancedGeo.setAttribute("instanceColor", this.colorAttr);
 
     this.material = new THREE.ShaderMaterial({
       vertexShader: LABEL_VERT,
       fragmentShader: LABEL_FRAG,
       uniforms: {
         uAtlas: { value: this.atlasTexture },
-        uHighlightColor: { value: new THREE.Color("#ffb800") },
+        uBgColor: { value: new THREE.Vector3(1, 1, 1) },
+        uBgOpacity: { value: 1 },
+        uTextColor: { value: new THREE.Vector3(0, 0, 0) },
+        uBorderOpacity: { value: 0.18 },
+        uTintRest: { value: 0.15 },
+        uTintHover: { value: 0.45 },
+        uHighlightColor: { value: new THREE.Vector3(1, 0.72, 0) },
       },
       transparent: true,
-      // fork: write depth, so a nearer label's card covers a farther one
-      // instead of the two texts blending into each other
-      depthWrite: true,
+      // fork fix (flicker): no depth writes among labels. Overlapping cards
+      // at nearly the same depth (always in 2D mode, where everything sits
+      // in z = 0) z-fought: which card won flipped from frame to frame as
+      // the nodes moved. The cards are drawn sorted far → near instead
+      // (updateVisibilityAndOcclusion), so a nearer card still covers a
+      // farther one, deterministically; nodes still hide labels behind them.
+      depthWrite: false,
       side: THREE.DoubleSide,
     });
+    this.setStyle(this.style ?? labelStyleFrom(settings, settings.colorHighlight));
 
     this.instancedMesh = new THREE.Mesh(this.instancedGeo, this.material);
     this.instancedMesh.frustumCulled = false;
     this.instancedMesh.renderOrder = 999;
     this.scene.add(this.instancedMesh);
+  }
+
+  /** fork: copy the per-label data into the draw slots (current order) */
+  private writeSlots() {
+    if (!this.translationAttr || !this.scaleAttr || !this.uvAttr || !this.opacityAttr || !this.highlightAttr || !this.colorAttr) return;
+    const tr = this.translationAttr.array as Float32Array, sc = this.scaleAttr.array as Float32Array;
+    const uv = this.uvAttr.array as Float32Array, op = this.opacityAttr.array as Float32Array;
+    const hl = this.highlightAttr.array as Float32Array, co = this.colorAttr.array as Float32Array;
+    for (let s = 0; s < this.visibleCount; s++) {
+      const i = this.slotLabel[s];
+      tr[s * 3] = this.labelTrans[i * 3]; tr[s * 3 + 1] = this.labelTrans[i * 3 + 1]; tr[s * 3 + 2] = this.labelTrans[i * 3 + 2];
+      sc[s * 2] = this.labelScale[i * 2]; sc[s * 2 + 1] = this.labelScale[i * 2 + 1];
+      for (let k = 0; k < 4; k++) { uv[s * 4 + k] = this.labelUV[i * 4 + k]; co[s * 4 + k] = this.labelColor[i * 4 + k]; }
+      op[s] = this.labelOpacity[i];
+      hl[s] = this.labelHighlight[i];
+    }
+    for (const a of [this.translationAttr, this.scaleAttr, this.uvAttr, this.opacityAttr, this.highlightAttr, this.colorAttr]) a.needsUpdate = true;
+    if (this.instancedGeo) this.instancedGeo.instanceCount = this.visibleCount;
   }
 
   public updateVisibilityAndOcclusion(
@@ -514,8 +649,8 @@ export class InstancedLabelRenderer {
     this.projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this.frustum.setFromProjectionMatrix(this.projScreenMatrix);
 
-    const trans = this.translationAttr.array as Float32Array;
-    const opacities = this.opacityAttr.array as Float32Array;
+    const trans = this.labelTrans;
+    const opacities = this.labelOpacity;
     const stride = this.positionsStride;
 
     const visibleDistance = settings.labelDistance;
@@ -558,6 +693,7 @@ export class InstancedLabelRenderer {
       }
 
       const distSq = camPos.distanceToSquared(this.tempNodePos);
+      this.labelDistSq[i] = distSq;
       if (distSq > visibleDistSq) {
         opacities[i] = 0.0;
         continue;
@@ -606,29 +742,15 @@ export class InstancedLabelRenderer {
       opacities[i] = opacity;
     }
 
-    this.translationAttr.needsUpdate = true;
-    this.opacityAttr.needsUpdate = true;
-  }
-
-  private hexToRgba(color: string, alpha: number): string {
-    if (!color) return `rgba(20, 20, 25, ${alpha})`;
-    if (color.startsWith("rgb")) {
-      const match = color.match(/\d+(\.\d+)?/g);
-      if (match && match.length >= 3) {
-        return `rgba(${match[0]}, ${match[1]}, ${match[2]}, ${alpha})`;
-      }
-    }
-    const cleanHex = color.replace("#", "");
-    if (cleanHex.length === 3) {
-      const r = parseInt(cleanHex[0] + cleanHex[0], 16) || 0;
-      const g = parseInt(cleanHex[1] + cleanHex[1], 16) || 0;
-      const b = parseInt(cleanHex[2] + cleanHex[2], 16) || 0;
-      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-    }
-    const r = parseInt(cleanHex.substring(0, 2), 16) || 0;
-    const g = parseInt(cleanHex.substring(2, 4), 16) || 0;
-    const b = parseInt(cleanHex.substring(4, 6), 16) || 0;
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    // fork: draw order — only the visible labels, farthest first, highlighted
+    // ones last (on top). Replaces depth writes between labels (see material).
+    let count = 0;
+    for (let i = 0; i < this.labelCount; i++) if (opacities[i] >= 0.005) this.slotLabel[count++] = i;
+    const order = this.slotLabel.subarray(0, count);
+    const hl = this.labelHighlight, dist = this.labelDistSq;
+    order.sort((a, b) => (hl[a] - hl[b]) || (dist[b] - dist[a]) || (a - b));
+    this.visibleCount = count;
+    this.writeSlots();
   }
 
   public clear(): void {
@@ -642,6 +764,8 @@ export class InstancedLabelRenderer {
       this.scaleAttr = null;
       this.uvAttr = null;
       this.opacityAttr = null;
+      this.highlightAttr = null;
+      this.colorAttr = null;
       this.material = null;
     }
     if (this.atlasTexture) {
@@ -651,5 +775,6 @@ export class InstancedLabelRenderer {
     this.labelCache.clear();
     this.labels = [];
     this.labelCount = 0;
+    this.visibleCount = 0;
   }
 }

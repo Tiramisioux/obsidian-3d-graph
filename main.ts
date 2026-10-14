@@ -164,6 +164,7 @@ export default class Graph3DPlugin extends Plugin {
 			.forEach((leaf) => {
 				if (leaf.view instanceof Graph3DView) {
 					leaf.view.setGroupsDirty();
+					leaf.view.onSettingsSaved(); // fork: switch panel + wake settled physics
 				}
 			});
 	}

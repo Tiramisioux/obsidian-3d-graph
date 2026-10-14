@@ -172,7 +172,151 @@
 	display: block;
 }
 
-/* fork: reverse-timeline button is faint while the timeline layout is off */
-.graph-3d-reverse-toggle.is-inactive {
-  opacity: 0.4;
+/* fork: in-view switch panel (src/ui/flip-switch.ts) — top left, collapsible.
+   Flip switches are Obsidian's own .checkbox-container toggles. */
+.graph-3d-switch-panel {
+	position: absolute;
+	top: 10px;
+	left: 10px;
+	z-index: 10;
+	width: 216px;
+	max-height: calc(100% - 60px);
+	overflow-y: auto;
+	box-sizing: border-box;
+	background-color: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m, 8px);
+	box-shadow: var(--shadow-s, 0 2px 8px rgba(0, 0, 0, 0.15));
+	font-size: var(--font-ui-small);
+	color: var(--text-normal);
+	user-select: none;
+}
+
+.graph-3d-switch-panel.is-collapsed {
+	width: auto;
+	overflow: hidden;
+}
+
+.graph-3d-switch-header {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 6px 10px 6px 6px;
+	cursor: pointer;
+	color: var(--text-muted);
+	font-weight: var(--font-semibold, 600);
+}
+
+.graph-3d-switch-header:hover {
+	color: var(--text-normal);
+	background-color: var(--background-modifier-hover);
+}
+
+.graph-3d-switch-chevron {
+	display: flex;
+	align-items: center;
+}
+
+.graph-3d-switch-chevron svg {
+	width: 14px;
+	height: 14px;
+}
+
+.graph-3d-switch-panel.is-collapsed .graph-3d-switch-body {
+	display: none;
+}
+
+.graph-3d-switch-body {
+	padding: 0 10px 8px;
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.graph-3d-switch-heading {
+	margin: 8px 0 2px;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.graph-3d-switch-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	min-height: 28px;
+	cursor: pointer;
+}
+
+.graph-3d-switch-row.is-disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.graph-3d-switch-label {
+	flex: 1 1 auto;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.graph-3d-switch-row .checkbox-container {
+	flex: 0 0 auto;
+	margin: 0;
+	transform: scale(0.85);
+	transform-origin: right center;
+}
+
+.graph-3d-switch-row-segmented {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 3px;
+	cursor: default;
+	padding: 4px 0;
+}
+
+.graph-3d-segmented {
+	display: flex;
+	flex: 0 0 auto;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s, 4px);
+	overflow: hidden;
+	background-color: var(--background-primary);
+}
+
+.graph-3d-segmented .graph-3d-segment {
+	all: unset;
+	box-sizing: border-box;
+	padding: 2px 7px;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	cursor: pointer;
+	line-height: 1.5;
+	flex: 1 1 0;
+	text-align: center;
+}
+
+.graph-3d-segmented .graph-3d-segment + .graph-3d-segment {
+	border-left: 1px solid var(--background-modifier-border);
+}
+
+.graph-3d-segmented .graph-3d-segment:hover:not(:disabled) {
+	color: var(--text-normal);
+	background-color: var(--background-modifier-hover);
+}
+
+.graph-3d-segmented .graph-3d-segment.is-active {
+	color: var(--text-on-accent);
+	background-color: var(--interactive-accent);
+}
+
+.graph-3d-segmented .graph-3d-segment:disabled {
+	cursor: default;
+}
+
+.graph-3d-segmented .graph-3d-segment:focus-visible,
+.graph-3d-switch-row .checkbox-container:focus-visible,
+.graph-3d-switch-header:focus-visible {
+	box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
 }
