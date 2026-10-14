@@ -630,6 +630,42 @@ export class Graph3DView extends ItemView {
     this.storylineLine = null;
   }
 
+  // ---- fork: "Open in 3D graph" scope + focused source note -------------
+
+  /** the note opened from (shown in the highlight colour, larger) */
+  public focusNodeId: string | null = null;
+
+  /** show a scope (filters) and optionally focus one note: highlight it and
+   *  fly the camera to it once the layout has settled */
+  public async showScope(scope: { filters: Filter[]; neighbors: boolean; focusId: string | null }) {
+    this.settings.filters = scope.filters;
+    this.settings.showNeighboringNodes = scope.neighbors;
+    this.focusNodeId = scope.focusId;
+    await this.plugin.saveSettings();
+    // a freshly opened view initialises asynchronously — wait for it (max ~5 s)
+    for (let i = 0; i < 50 && !this.isGraphInitialized; i++) await new Promise((r) => window.setTimeout(r, 100));
+    while (this.isUpdating) await new Promise((r) => window.setTimeout(r, 100));
+    if (this.isSettingsPanelOpen()) this.renderSettingsPanel();
+    await this.updateData({ useCache: false, reheat: true });
+    window.setTimeout(() => {
+      if (scope.focusId) this.flyToNode(scope.focusId);
+      else this.graph?.zoomToFit(800);
+    }, 2200);
+  }
+
+  /** camera to a node, at a distance that keeps its neighbourhood in view */
+  public flyToNode(id: string, distance = 140) {
+    if (!this.graph) return;
+    const idx = this.nodeIdToIndex.get(id);
+    if (idx === undefined || this.currentPositions.length <= idx * 4) return;
+    const p = new THREE.Vector3(this.currentPositions[idx * 4], this.currentPositions[idx * 4 + 1], this.currentPositions[idx * 4 + 2]);
+    const cam = this.graph.camera().position.clone();
+    const dir = cam.sub(p).normalize();
+    if (!isFinite(dir.x)) dir.set(0, 0, 1);
+    const to = p.clone().add(dir.multiplyScalar(distance));
+    this.graph.cameraPosition({ x: to.x, y: to.y, z: to.z }, { x: p.x, y: p.y, z: p.z }, 1000);
+  }
+
   private presentationButton: HTMLElement | null = null;
 
   private presentationMode(): "network" | "timeline" | "storyline" {
@@ -929,6 +965,13 @@ export class Graph3DView extends ItemView {
         camera.getWorldDirection(tempCamDir);
         dragPlane.setFromNormalAndCoplanarPoint(tempCamDir.negate(), nodePos);
       }
+    });
+
+    // fork: leaving the graph while over a node must end the hover too, or
+    // the page-preview popover stays open (nothing else tells it to close)
+    this.registerDomEvent(this.graphContainer, "pointerleave", () => {
+      if (this.hoveredNode) this.handleNodeHover(null);
+      else this.endHoverPreview();
     });
 
     this.registerDomEvent(this.graphContainer, "pointermove", (e: PointerEvent) => {
@@ -1457,6 +1500,7 @@ export class Graph3DView extends ItemView {
   }
 
   private getNodeSize(node: GraphNode): number {
+    if (node.id === this.focusNodeId) return this.settings.nodeSize * 2.2; // fork: focused source
     switch (node.type) {
       case NodeType.Tag:
         return this.settings.tagNodeSize;
@@ -1470,7 +1514,7 @@ export class Graph3DView extends ItemView {
   private getNodeColor(node: GraphNode): string {
     const { useThemeColors, colorHighlight, colorNode, colorTag, colorAttachment } = this.settings;
 
-    if (this.highlightedNodes.has(node.id)) {
+    if (this.highlightedNodes.has(node.id) || node.id === this.focusNodeId) {
       return useThemeColors
         ? this.getCssColor("--graph-node-focused", colorHighlight)
         : colorHighlight;

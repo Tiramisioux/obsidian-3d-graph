@@ -1,5 +1,5 @@
-import { Plugin, debounce } from "obsidian";
-import { Graph3DPluginSettings, DEFAULT_SETTINGS } from "./src/types";
+import { Plugin, TAbstractFile, TFile, TFolder, debounce } from "obsidian";
+import { Graph3DPluginSettings, DEFAULT_SETTINGS, type Filter } from "./src/types";
 import { Graph3DView, VIEW_TYPE_3D_GRAPH } from "./src/view";
 import { Graph3DSettingsTab } from "./src/settings";
 
@@ -26,12 +26,38 @@ export default class Graph3DPlugin extends Plugin {
 		this.addCommand({
 			id: "cycle-presentation",
 			name: "Next presentation (network → timeline → storyline)",
+			hotkeys: [{ modifiers: ["Mod", "Alt"], key: "G" }],
 			callback: () => {
 				this.app.workspace
 					.getLeavesOfType(VIEW_TYPE_3D_GRAPH)
 					.forEach((leaf) => {
 						if (leaf.view instanceof Graph3DView) leaf.view.cyclePresentation();
 					});
+			},
+		});
+
+		// fork: open a folder, hub or note in the graph — right-click in the
+		// file list, or the active note via the command (bind a hotkey to it)
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu, file) => {
+				if (!(file instanceof TFolder) && !(file instanceof TFile && file.extension === "md")) return;
+				menu.addItem((item) =>
+					item
+						.setTitle("Open in 3D graph")
+						.setIcon("network")
+						.onClick(() => this.showInGraph(file)),
+				);
+			}),
+		);
+		this.addCommand({
+			id: "show-active-in-graph",
+			name: "Show active note in 3D graph (its project, highlighted)",
+			hotkeys: [{ modifiers: ["Mod", "Shift"], key: "G" }], // fork default; change in Settings → Hotkeys
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file || file.extension !== "md") return false;
+				if (!checking) this.showInGraph(file);
+				return true;
 			},
 		});
 
@@ -54,6 +80,35 @@ export default class Graph3DPlugin extends Plugin {
 		this.registerEvent(
 			this.app.metadataCache.on("resolve", debouncedUpdate),
 		);
+	}
+
+	/**
+	 * fork: what to show for a folder / hub / note.
+	 * - folder → everything under it (path filter)
+	 * - note or hub with a `projekt: "#X"` frontmatter → its project (tag X),
+	 *   the note highlighted — the same scope a hub's own aggregator uses
+	 * - note under 03_PROJEKTPLANERING/<CTX>/<PROJ>/ without `projekt` → that
+	 *   project folder, highlighted
+	 * - any other note → the note and its linked neighbours, highlighted
+	 */
+	scopeFor(file: TAbstractFile): { filters: Filter[]; neighbors: boolean; focusId: string | null } {
+		if (file instanceof TFolder) {
+			return { filters: [{ type: "path", value: `${file.path}/`, enabled: true }], neighbors: false, focusId: null };
+		}
+		const fm = this.app.metadataCache.getFileCache(file as TFile)?.frontmatter;
+		const projekt = String(fm?.projekt ?? "").trim().replace(/^#/, "");
+		if (projekt) {
+			return { filters: [{ type: "tag", value: projekt, enabled: true }], neighbors: false, focusId: file.path };
+		}
+		const m = /^(03_PROJEKTPLANERING\/[^/]+\/[^/]+\/)/.exec(file.path);
+		if (m) return { filters: [{ type: "path", value: m[1], enabled: true }], neighbors: false, focusId: file.path };
+		return { filters: [{ type: "path", value: file.path, enabled: true }], neighbors: true, focusId: file.path };
+	}
+
+	async showInGraph(file: TAbstractFile) {
+		await this.activateView();
+		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH)[0];
+		if (leaf?.view instanceof Graph3DView) await leaf.view.showScope(this.scopeFor(file));
 	}
 
 	triggerLiveUpdate() {

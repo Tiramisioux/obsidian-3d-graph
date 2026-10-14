@@ -2,7 +2,7 @@
 
 A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Aryan Gupta, with fixes and extra ways to present your vault. Everything from the original works the same; this fork adds what's listed below.
 
-> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **based on:** 2.8.1
+> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.3 · **based on:** 2.8.1
 > It has its own id on purpose: a community-store update of the original can never overwrite it.
 
 ## What this fork adds
@@ -14,7 +14,28 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 | 👁 | **Page preview on hover** | Hover a note node to see Obsidian's page preview. Needs the core *Page preview* plugin. Turn it off under *Settings → Page preview on hover*, or require a modifier key under *Settings → Page preview → 3D Graph*. |
 | 🕰 | **Timeline layout** | Notes are pulled **vertically by date** — oldest at the top, newest at the bottom (or the other way with *Newest at the top*). Links still cluster related notes, so it's a rough timeline, not a ruler. |
 | 🧵 | **Storyline** | A thin line threads through the notes in date order, so you can follow the story from first note to last. |
-| 🔀 | **Presentation switch** | A button in the graph's top-right toolbar (and the command *Next presentation*) steps through **Network → Timeline → Timeline + storyline**. |
+| 🔀 | **Presentation switch** | A button in the graph's top-right toolbar (or **⌥⌘G**, command *Next presentation*) steps through **Network → Timeline → Timeline + storyline**. |
+| 🎯 | **Open a folder, hub or note in the graph** | Right-click a folder or note in the file list → **Open in 3D graph**, or press **⌘⇧G** for the note you're in. A folder shows everything inside it; a note or hub shows its **project** with the note **highlighted** (larger, highlight colour) and the camera on it — so you see where it sits in the structure. |
+
+### Keyboard shortcuts
+
+| Keys | Does |
+|---|---|
+| **⌘⇧G** | show the active note in the 3D graph — its project, the note highlighted |
+| **⌥⌘G** | next presentation: network → timeline → timeline + storyline |
+
+Defaults set by the fork; change them under *Settings → Hotkeys* (search "3D graph").
+
+### What "Open in 3D graph" shows
+
+| You pick | The graph shows | Highlighted |
+|---|---|---|
+| a folder | everything under that folder | — (zooms to fit) |
+| a note or hub with a `projekt: "#X"` property | everything tagged `#X` — the project | that note |
+| a note in a project folder (`…/<context>/<project>/…`) without `projekt` | that project folder | that note |
+| any other note | the note and the notes it links to / from | that note |
+
+It replaces the graph's current filter; set a filter yourself any time to change it.
 
 ### Example: Zettelkasten file names
 
@@ -65,7 +86,7 @@ npx tsc -noEmit -skipLibCheck && node esbuild.config.mjs production
 
 The Rust/WASM physics engine is prebuilt in `src/physics/wasm-data.ts`; `wasm-pack` (`npm run build`) is only needed when changing `crates/`.
 
-Fork changes, by file: label fix + label formatting in `src/rendering/label-renderer.ts`; page preview, timeline, storyline and the presentation switch in `src/view.ts`; new settings in `src/types.ts` / `src/settings.ts`; hover source and command in `main.ts`.
+Fork changes, by file: label fix + label formatting in `src/rendering/label-renderer.ts`; page preview, timeline, storyline, presentation switch and the focus highlight (`showScope`, `flyToNode`) in `src/view.ts`; new settings in `src/types.ts` / `src/settings.ts`; hover source, commands, hotkeys, the file-menu item and the folder/hub/note scope (`scopeFor`) in `main.ts`. Live-testing helpers for developers: `scripts/dev/`.
 
 ---
 
