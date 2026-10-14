@@ -2,7 +2,7 @@
 
 A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Aryan Gupta, with fixes and extra ways to present your vault. Everything from the original works the same; this fork adds what's listed below.
 
-> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.9 · **based on:** 2.8.1
+> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.10 · **based on:** 2.8.1
 > It has its own id on purpose: a community-store update of the original can never overwrite it.
 
 ## What this fork adds
@@ -13,7 +13,8 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 | ✂️ | **Shorter labels** | *Settings → Strip from label (regex)* removes a pattern from note labels, e.g. a Zettelkasten timestamp; *Underscores as spaces* tidies the rest. Search still matches the full file name; tag labels are left alone. |
 | 🏷 | **Label cards that don't blur together** | Each label is a rounded card with a faint outline (*Settings → Label border opacity*), and a nearer label covers a farther one instead of the texts mixing. Set *Label Background Opacity* to 1 for fully opaque cards. The label settings (size, colours, opacity) now apply immediately instead of after a reload. |
 | ↩️ | **Labels on several lines** | Long labels wrap at word boundaries — about 22 characters per line, up to 3 lines (*Settings → Label line width*; 0 = one line, cut at 40 characters). |
-| 👁 | **Page preview on hover** | Hover a note node to see Obsidian's page preview. Needs the core *Page preview* plugin. Turn it off under *Settings → Page preview on hover*, or require a modifier key under *Settings → Page preview → 3D Graph*. |
+| 🖱 | **Clickable labels** | Labels act like their node: **hover** a label to light it up (card tinted in the highlight colour, slightly larger) and see the page preview; **click** it to fly to the note; drag it to move the note. |
+| 👁 | **Page preview on hover** | Hover a note node — or its label — to see Obsidian's page preview. Needs the core *Page preview* plugin. Turn it off under *Settings → Page preview on hover*, or require a modifier key under *Settings → Page preview → 3D Graph*. |
 | 🕰 | **Timeline layout** | Notes are pulled **vertically by date** — oldest at the top, newest at the bottom. **Reverse it** (newest at the top) with the toolbar's arrow button, **⌥⌘L**, or graph ⚙ → *Timeline → Newest at the top*. Links still cluster related notes, so it's a rough timeline, not a ruler. |
 | 🧵 | **Storyline** | A thin line threads through the notes in date order, so you can follow the story from first note to last. |
 | 🗓 | **Time grid** | In timeline view: faint frames at each **week** (labelled *v. 42*) or **month** (*okt. 2026*) — graph ⚙ → *Timeline → Time grid* (Off / Weeks / Months / Auto). The frames follow where the notes actually are; seen from above they stack like floors. |

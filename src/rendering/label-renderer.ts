@@ -28,17 +28,20 @@ const LABEL_VERT = /* glsl */ `
   attribute vec2 instanceScale;
   attribute vec4 instanceUV;
   attribute float instanceOpacity;
+  attribute float instanceHighlight; // fork: hovered label
 
   varying vec2 vUv;
   varying float vOpacity;
+  varying float vHighlight;
 
   void main() {
     vOpacity = instanceOpacity;
+    vHighlight = instanceHighlight;
     vUv = vec2(instanceUV.x + uv.x * instanceUV.z, instanceUV.y + (1.0 - uv.y) * instanceUV.w);
 
     // Billboarding in view space: quad faces the camera
     vec4 mvPosition = modelViewMatrix * vec4(instanceTranslation, 1.0);
-    mvPosition.xy += position.xy * instanceScale;
+    mvPosition.xy += position.xy * instanceScale * (1.0 + 0.12 * instanceHighlight);
     gl_Position = projectionMatrix * mvPosition;
   }
 `;
@@ -47,9 +50,11 @@ const LABEL_FRAG = /* glsl */ `
   precision mediump float;
 
   uniform sampler2D uAtlas;
+  uniform vec3 uHighlightColor; // fork
 
   varying vec2 vUv;
   varying float vOpacity;
+  varying float vHighlight;
 
   void main() {
     if (vOpacity < 0.005) {
@@ -59,7 +64,13 @@ const LABEL_FRAG = /* glsl */ `
     if (texColor.a < 0.01) {
       discard;
     }
-    gl_FragColor = vec4(texColor.rgb, texColor.a * vOpacity);
+    vec3 rgb = texColor.rgb;
+    // fork: hovered label — tint the light card background, keep dark text
+    if (vHighlight > 0.5) {
+      float light = step(0.5, dot(rgb, vec3(0.3333)));
+      rgb = mix(rgb, uHighlightColor, 0.38 * light);
+    }
+    gl_FragColor = vec4(rgb, max(texColor.a, vHighlight * 0.95) * vOpacity);
   }
 `;
 
@@ -133,6 +144,7 @@ export class InstancedLabelRenderer {
   private scaleAttr: THREE.InstancedBufferAttribute | null = null;
   private uvAttr: THREE.InstancedBufferAttribute | null = null;
   private opacityAttr: THREE.InstancedBufferAttribute | null = null;
+  private highlightAttr: THREE.InstancedBufferAttribute | null = null; // fork
   private material: THREE.ShaderMaterial | null = null;
 
   private labels: LabelItem[] = [];
@@ -153,6 +165,47 @@ export class InstancedLabelRenderer {
     const ctx = this.atlasCanvas.getContext("2d", { willReadFrequently: false });
     if (!ctx) throw new Error("Failed to create 2D canvas context for label atlas");
     this.atlasCtx = ctx;
+  }
+
+  /** fork: label under a ray — intersects the ray with each visible label's
+   *  camera-facing quad (the vertex shader billboards it in view space);
+   *  returns the node index of the nearest hit, or null */
+  public getNodeIndexAtLabel(raycaster: THREE.Raycaster, camera: THREE.Camera): number | null {
+    if (!this.translationAttr || !this.scaleAttr || !this.opacityAttr || !this.instancedMesh?.visible) return null;
+    const tr = this.translationAttr.array as Float32Array, sc = this.scaleAttr.array as Float32Array;
+    const op = this.opacityAttr.array as Float32Array;
+    const o = raycaster.ray.origin, d = raycaster.ray.direction;
+    const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+    const denom = d.dot(fwd);
+    if (Math.abs(denom) < 1e-6) return null;
+    const c = new THREE.Vector3(), p = new THREE.Vector3();
+    let best: number | null = null, bestT = Infinity;
+    for (let i = 0; i < this.labelCount; i++) {
+      if (op[i] < 0.05) continue;
+      c.set(tr[i * 3], tr[i * 3 + 1], tr[i * 3 + 2]);
+      const t = c.clone().sub(o).dot(fwd) / denom;
+      if (t <= 0 || t >= bestT) continue;
+      p.copy(d).multiplyScalar(t).add(o).sub(c);
+      if (Math.abs(p.dot(right)) <= sc[i * 2] / 2 && Math.abs(p.dot(up)) <= sc[i * 2 + 1] / 2) {
+        best = this.labels[i].nodeIndex; bestT = t;
+      }
+    }
+    return best;
+  }
+
+  /** fork: highlight the label of one node (null = none) */
+  public setHighlightedNode(nodeIndex: number | null, color?: string) {
+    if (!this.highlightAttr) return;
+    const arr = this.highlightAttr.array as Float32Array;
+    arr.fill(0);
+    if (nodeIndex !== null) {
+      const i = this.labels.findIndex((l) => l.nodeIndex === nodeIndex);
+      if (i >= 0) arr[i] = 1;
+    }
+    if (color && this.material) (this.material.uniforms.uHighlightColor.value as THREE.Color).set(color);
+    this.highlightAttr.needsUpdate = true;
   }
 
   public initLabels(
@@ -413,12 +466,17 @@ export class InstancedLabelRenderer {
     this.instancedGeo.setAttribute("instanceScale", this.scaleAttr);
     this.instancedGeo.setAttribute("instanceUV", this.uvAttr);
     this.instancedGeo.setAttribute("instanceOpacity", this.opacityAttr);
+    // fork: per-label hover highlight
+    this.highlightAttr = new THREE.InstancedBufferAttribute(new Float32Array(this.labelCount), 1, false);
+    this.highlightAttr.setUsage(THREE.DynamicDrawUsage);
+    this.instancedGeo.setAttribute("instanceHighlight", this.highlightAttr);
 
     this.material = new THREE.ShaderMaterial({
       vertexShader: LABEL_VERT,
       fragmentShader: LABEL_FRAG,
       uniforms: {
         uAtlas: { value: this.atlasTexture },
+        uHighlightColor: { value: new THREE.Color("#ffb800") },
       },
       transparent: true,
       // fork: write depth, so a nearer label's card covers a farther one

@@ -797,6 +797,15 @@ export class Graph3DView extends ItemView {
     this.graph.cameraPosition({ x: to.x, y: to.y, z: to.z }, { x: p.x, y: p.y, z: p.z }, 1000);
   }
 
+  /** fork: node under the current raycaster ray — its sphere, else its label */
+  private pickNodeIndex(): number | null {
+    if (!this.instancedRenderer) return null;
+    const hit = this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions);
+    if (hit !== null) return hit;
+    if (!this.settings.showNodeLabels || !this.labelRenderer || !this.graph) return null;
+    return this.labelRenderer.getNodeIndexAtLabel(this.raycaster, this.graph.camera());
+  }
+
   private presentationButton: HTMLElement | null = null;
 
   /** fork: " · ⌥⌘G" — the command's current hotkey as Obsidian prints it
@@ -1193,7 +1202,7 @@ export class Graph3DView extends ItemView {
       const rect = this.graphContainer.getBoundingClientRect();
       const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -(((e.clientY - rect.top) / rect.height) * 2 - 1));
       this.raycaster.setFromCamera(ndc, this.graph.camera());
-      return this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions) !== null;
+      return this.pickNodeIndex() !== null;
     };
     this.registerDomEvent(this.graphContainer, "pointerdown", (e: PointerEvent) => {
       if (e.button !== 0) return;
@@ -1259,7 +1268,7 @@ export class Graph3DView extends ItemView {
 
       const ndc = updatePointerNDC(e);
       this.raycaster.setFromCamera(ndc, camera);
-      const hitIdx = this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions);
+      const hitIdx = this.pickNodeIndex();
 
       if (hitIdx !== null && hitIdx < this.currentNodes.length) {
         draggedNode = this.currentNodes[hitIdx];
@@ -1306,7 +1315,7 @@ export class Graph3DView extends ItemView {
           this.syncDragPositionsToWasm(draggedNode);
         }
       } else {
-        const hitIdx = this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions);
+        const hitIdx = this.pickNodeIndex();
         const node = hitIdx !== null ? this.currentNodes[hitIdx] : null;
         if (node !== this.hoveredNode) {
           this.handleNodeHover(node, e);
@@ -1337,7 +1346,7 @@ export class Graph3DView extends ItemView {
 
       const ndc = updatePointerNDC(e);
       this.raycaster.setFromCamera(ndc, camera);
-      const hitIdx = this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions);
+      const hitIdx = this.pickNodeIndex();
 
       if (hitIdx !== null && hitIdx < this.currentNodes.length) {
         this.handleNodeClick(this.currentNodes[hitIdx], e);
@@ -1358,7 +1367,7 @@ export class Graph3DView extends ItemView {
 
       const ndc = updatePointerNDC(e);
       this.raycaster.setFromCamera(ndc, camera);
-      const hitIdx = this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions);
+      const hitIdx = this.pickNodeIndex();
 
       if (hitIdx !== null && hitIdx < this.currentNodes.length) {
         this.handleNodeDoubleClick(this.currentNodes[hitIdx]);
@@ -2090,6 +2099,9 @@ export class Graph3DView extends ItemView {
       this.hoveredNode.fz = this.hoveredNode.z;
     }
 
+    // fork: light up the hovered node's label too
+    const hlColor = this.settings.useThemeColors ? this.getCssColor("--graph-node-focused", this.settings.colorHighlight) : this.settings.colorHighlight;
+    this.labelRenderer?.setHighlightedNode(node ? (this.nodeIdToIndex.get(node.id) ?? null) : null, hlColor);
     if (node && event) this.showHoverPreview(node, event);
     else this.endHoverPreview();
 
