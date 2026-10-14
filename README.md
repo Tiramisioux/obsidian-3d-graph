@@ -2,7 +2,7 @@
 
 A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Aryan Gupta, with fixes and extra ways to present your vault. Everything from the original works the same; this fork adds what's listed below.
 
-> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.10 · **based on:** 2.8.1
+> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.11 · **based on:** 2.8.1
 > It has its own id on purpose: a community-store update of the original can never overwrite it.
 
 ## What this fork adds
@@ -22,6 +22,8 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 | ✋ | **Pan the view** | **Space + drag**, or **two-finger drag** on a trackpad (pinch still zooms; a mouse wheel keeps zooming). In 2D mode a plain drag on empty space pans too. Right-drag pans as before. Turn off trackpad panning under graph ⚙ → *Two-finger drag pans*. |
 | ⌨️ | **Shortcuts keep working in the graph** | Fixed: with keyboard camera controls on, ⌘Q, ⌘W, ⌘S, ⌘E … did nothing while the graph had focus (the Q/W/S/E/A/D movement keys swallowed them) and the camera could keep drifting afterwards. |
 | 🔀 | **Presentation switch** | A button in the graph's top-right toolbar (or **⌥⌘G**, command *Next presentation*) steps through **Network → Timeline → Timeline + storyline**. |
+| 🎨 | **Colour by note type** | Two new colour-group rules (*Settings → Color Groups*): **`prop: key=value`** matches a frontmatter property (`prop: typ=hub`, several values with `\|`: `prop: källa=email\|mail`, or just `prop: status` for "has the property"), and **`name: <regex>`** matches the node's name — `name: .` is a catch-all for "every other note". The first group that matches wins, so put the catch-all last. See the example below. |
+| 📅 | **Meetings as events** | A todo with the meeting tag (default `#röd`) and a due date — `- [ ] möte med Anna #röd [due:: 2026-10-20 10:00]` — becomes a **node of its own**, linked to its note, labelled *20 okt möte med Anna* and placed at **its own date** on the timeline and storyline. Hover it for the note's preview, double-click to open the note. If you keep a meeting note (`typ: möte`, named with the meeting's timestamp and the same text), the note stands in for the todo and no extra node is drawn. *Settings → Meetings*: on/off, tag, colour (red). |
 | 🎯 | **Open a folder, hub or note in the graph** | Right-click a folder or note in the file list → **Open in 3D graph**, or press **⌘⇧G** for the note you're in. A folder shows everything inside it; a note or hub shows its **project** with the note **highlighted** (larger, highlight colour) and the camera on it — so you see where it sits in the structure. |
 
 ### Keyboard shortcuts
@@ -56,11 +58,27 @@ File names like `20261014104013 RISE UND inspo_verksamhetslogik` become the labe
 
 Handy together with a tag filter: when you filter on a project, its name is implied, so it doesn't need to be on every label.
 
+### Example: colours by note type
+
+Groups as in the author's vault (first match wins):
+
+| Query | Colour | Catches |
+|---|---|---|
+| `prop: typ=hub` | graphite | project hubs |
+| `prop: typ=person` | blue | person notes |
+| `prop: källa=email\|mail` | yellow | imported emails |
+| `prop: typ=möte` | red | meeting notes |
+| `name: .` | white | every other note |
+
+Meeting todos (`#röd` + a date) are red through *Settings → Meetings → Meeting color*, not through a group.
+
 ### How a note's date is found (timeline + storyline)
 
 1. a `YYYYMMDD` / `YYYYMMDDHHmmss` prefix in the file name,
 2. otherwise the frontmatter property `datum` or `date`,
 3. otherwise the file's creation date.
+
+A meeting todo uses its own due date (`[due:: YYYY-MM-DD]`, optionally ` HH:MM`, or `📅 YYYY-MM-DD`).
 
 Tags have no date and aren't pulled; attachments are pulled but not part of the storyline.
 
@@ -75,6 +93,7 @@ Tags have no date and aren't pulled; attachments are pulled but not part of the 
 | Label border opacity | Settings → Labels | 0.18 |
 | Timeline layout · Newest at the top · Timeline strength · Timeline length · Storyline | graph view ⚙ → *Timeline* | off · off · 0.08 · 600 · off |
 | 2D mode · Two-finger drag pans · Time grid | graph view ⚙ → *Timeline* | off · on · Off |
+| Meeting todos as events · Meeting tag · Meeting color | Settings → Meetings | on · `röd` · red `#d32a32` |
 
 ## Install
 

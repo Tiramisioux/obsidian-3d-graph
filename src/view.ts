@@ -35,11 +35,16 @@ interface ProcessedGraphLink {
 interface PreprocessedGroup {
   color: string;
   query: string;
-  type: "path" | "tag" | "file" | "text";
+  type: "path" | "tag" | "file" | "text" | "prop" | "name";
   pathQuery?: string;
   tagQuery?: string;
   fileQuery?: string;
   fileRegex?: RegExp;
+  /** fork: `prop: key=a|b` — frontmatter key (lower case) and accepted values */
+  propKey?: string;
+  propValues?: string[];
+  /** fork: `name: <regex>` on the node's name */
+  nameRegex?: RegExp;
 }
 
 export class Graph3DView extends ItemView {
@@ -562,6 +567,7 @@ export class Graph3DView extends ItemView {
   /** a note's date: the YYYYMMDDHHmmss file-name prefix, else frontmatter
    *  `datum`/`date`, else the file's creation time; null for tags/unknown */
   private nodeDate(node: GraphNode): number | null {
+    if (node.type === NodeType.Event) return node.date ?? null;
     if (node.type !== NodeType.File && node.type !== NodeType.Attachment) return null;
     const base = (node.id.split("/").pop() || "").replace(/\.[^.]+$/, "");
     const m = /^(\d{4})(\d{2})(\d{2})(\d{2})?(\d{2})?(\d{2})?(?!\d)/.exec(base);
@@ -598,7 +604,7 @@ export class Graph3DView extends ItemView {
     });
     this.storylineOrder = dates
       .map((d, i) => [d, i] as [number | null, number])
-      .filter(([d, i]) => d !== null && nodes[i].type === NodeType.File)
+      .filter(([d, i]) => d !== null && (nodes[i].type === NodeType.File || nodes[i].type === NodeType.Event))
       .sort((a, b) => (a[0] as number) - (b[0] as number))
       .map(([, i]) => i);
     if (this.settings.storyline && this.storylineOrder.length > 1) {
@@ -804,6 +810,21 @@ export class Graph3DView extends ItemView {
     if (hit !== null) return hit;
     if (!this.settings.showNodeLabels || !this.labelRenderer || !this.graph) return null;
     return this.labelRenderer.getNodeIndexAtLabel(this.raycaster, this.graph.camera());
+  }
+
+  /** fork: does a note's frontmatter `key` (case-insensitive key) hold one of
+   *  `values`? Lists count per item; no values = the key just has to be set */
+  private frontmatterMatches(path: string, key: string, values: string[]): boolean {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return false;
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!fm) return false;
+    const k = Object.keys(fm).find((x) => x.toLowerCase() === key);
+    if (k === undefined) return false;
+    const raw = fm[k];
+    const items = (Array.isArray(raw) ? raw : [raw]).map((v) => String(v ?? "").trim().toLowerCase());
+    if (!values.length) return items.some((v) => v !== "");
+    return items.some((v) => values.includes(v));
   }
 
   private presentationButton: HTMLElement | null = null;
@@ -1783,6 +1804,27 @@ export class Graph3DView extends ItemView {
             type: "tag" as const,
             tagQuery: query.substring(4).trim().replace(/^#/, ""),
           };
+        } else if (query.startsWith("prop:")) {
+          // fork: frontmatter property — "prop: typ=person", alternatives with | ("prop: källa=email|mail")
+          const body = group.query.substring(5).trim();
+          const eq = body.indexOf("=");
+          return {
+            color: group.color,
+            query,
+            type: "prop" as const,
+            propKey: (eq >= 0 ? body.slice(0, eq) : body).trim().toLowerCase(),
+            propValues: eq >= 0 ? body.slice(eq + 1).split("|").map((v) => v.trim().toLowerCase()).filter(Boolean) : [],
+          };
+        } else if (query.startsWith("name:")) {
+          // fork: words in the file name, as a case-insensitive regex — "name: möte|meeting"
+          const body = group.query.substring(5).trim();
+          let nameRegex: RegExp;
+          try {
+            nameRegex = new RegExp(body, "iu");
+          } catch {
+            nameRegex = new RegExp(body.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "iu");
+          }
+          return { color: group.color, query, type: "name" as const, nameRegex };
         } else if (query.startsWith("file:")) {
           const fileQuery = query.substring(5).trim();
           let fileRegex: RegExp | undefined;
@@ -1841,6 +1883,8 @@ export class Graph3DView extends ItemView {
         : colorHighlight;
     }
 
+    if (node.type === NodeType.Event) return this.settings.colorEvent; // fork: meetings
+
     for (const group of this.preprocessedGroups) {
       const { query, type } = group;
 
@@ -1857,6 +1901,14 @@ export class Graph3DView extends ItemView {
           node.type === NodeType.File &&
           node.tags?.some((tag) => tag.toLowerCase() === tagQuery)
         ) {
+          return group.color;
+        }
+      } else if (type === "prop") {
+        if (node.type === NodeType.File && this.frontmatterMatches(node.id, group.propKey!, group.propValues!)) {
+          return group.color;
+        }
+      } else if (type === "name") {
+        if (node.type === NodeType.File && group.nameRegex!.test(node.name)) {
           return group.color;
         }
       } else if (type === "file") {
@@ -1980,7 +2032,8 @@ export class Graph3DView extends ItemView {
     if (!node) return;
 
     if (event && (event.ctrlKey || event.metaKey)) {
-      this.app.workspace.openLinkText(node.id, node.id, "tab");
+      const target = node.type === NodeType.Event ? node.sourcePath! : node.id; // fork
+      this.app.workspace.openLinkText(target, target, "tab");
       return;
     }
 
@@ -1997,8 +2050,8 @@ export class Graph3DView extends ItemView {
   }
 
   private handleNodeDoubleClick(node: GraphNode) {
-    if (node.type === NodeType.File || node.type === NodeType.Attachment) {
-      const file = this.app.vault.getAbstractFileByPath(node.id);
+    if (node.type === NodeType.File || node.type === NodeType.Attachment || node.type === NodeType.Event) {
+      const file = this.app.vault.getAbstractFileByPath(node.type === NodeType.Event ? node.sourcePath! : node.id);
       if (file instanceof TFile) this.app.workspace.getLeaf("tab").openFile(file);
     }
   }
@@ -2059,20 +2112,22 @@ export class Graph3DView extends ItemView {
   private lastHoverLink: string | null = null;
 
   private showHoverPreview(node: GraphNode, event: PointerEvent) {
-    if (!this.plugin.settings.hoverPreview || node.type !== NodeType.File) return;
+    if (!this.plugin.settings.hoverPreview) return;
+    if (node.type !== NodeType.File && node.type !== NodeType.Event) return;
+    const link = node.type === NodeType.Event ? node.sourcePath! : node.id; // fork: the todo's note
     const pop = this.hoverPopover;
-    if (pop && pop.state !== 0 /* not hidden */ && this.lastHoverLink === node.id) {
+    if (pop && pop.state !== 0 /* not hidden */ && this.lastHoverLink === link) {
       pop.onTarget = true;
       pop.transition();
       return;
     }
-    this.lastHoverLink = node.id;
+    this.lastHoverLink = link;
     this.app.workspace.trigger("hover-link", {
       event,
       source: this.plugin.manifest.id,
       hoverParent: this,
       targetEl: null,
-      linktext: node.id,
+      linktext: link,
       sourcePath: "",
     });
   }
@@ -2450,7 +2505,76 @@ export class Graph3DView extends ItemView {
       }
     }
 
+    if (this.settings.showEvents) await this.addEventNodes(nodesToShow, linksToShow);
+
     return { nodes: nodesToShow, links: linksToShow };
+  }
+
+  // ---- fork: meetings as events ------------------------------------------
+  // A meeting is a todo line carrying the event tag (default `#röd`) and a due
+  // date. Each one becomes a node of its own, linked to the note it lives in
+  // and dated by its due date, so it sits at the right height on the timeline.
+  // A möte note (`typ: möte`, named `<meeting timestamp> … <todo text>`) for
+  // the same day and text stands in for the todo — no second node then.
+
+  /** compare key for a meeting's text: lower case, letters and digits only */
+  private static meetingKey(day: string, text: string): string {
+    return day + "|" + text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  }
+
+  private async addEventNodes(nodes: GraphNode[], links: { source: string; target: string }[]) {
+    const tag = "#" + this.settings.eventTag.replace(/^#/, "").trim().toLowerCase();
+    if (tag === "#") return;
+    const tagRe = new RegExp(`(^|\\s)${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}_/-])`, "iu");
+    const dueRe = /\[due::\s*(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?\s*\]|📅\s*(\d{4})-(\d{2})-(\d{2})/u;
+
+    const covered = new Set<string>(); // meetings that already have a möte note
+    for (const n of nodes) {
+      if (n.type !== NodeType.File) continue;
+      const f = this.app.vault.getAbstractFileByPath(n.id);
+      if (!(f instanceof TFile)) continue;
+      const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
+      const typ = String(fm?.typ ?? fm?.type ?? "").toLowerCase();
+      const m = /^(\d{8})\d{0,6}\s+(.*)$/.exec(f.basename);
+      if ((typ === "möte" || typ === "mote") && m) {
+        covered.add(Graph3DView.meetingKey(m[1], String(fm?.fritext || m[2])));
+      }
+    }
+
+    const fileNodes = nodes.filter((n) => n.type === NodeType.File);
+    for (const n of fileNodes) {
+      const f = this.app.vault.getAbstractFileByPath(n.id);
+      if (!(f instanceof TFile)) continue;
+      const cache = this.app.metadataCache.getFileCache(f);
+      if (!cache?.listItems?.some((li) => li.task !== undefined)) continue;
+      if (!(cache.tags || []).some((t) => t.tag.toLowerCase() === tag)) continue;
+      const lines = (await this.app.vault.cachedRead(f)).split("\n");
+      for (const li of cache.listItems) {
+        if (li.task === undefined) continue;
+        const line = lines[li.position.start.line] || "";
+        if (!tagRe.test(line)) continue;
+        const d = dueRe.exec(line);
+        if (!d) continue;
+        const [y, mo, da] = d[1] ? [d[1], d[2], d[3]] : [d[6], d[7], d[8]];
+        const date = new Date(+y, +mo - 1, +da, +(d[4] || 0), +(d[5] || 0)).getTime();
+        if (isNaN(date)) continue;
+        const text = line
+          .replace(/^\s*[-*+]\s+\[.\]\s*/, "")
+          .replace(/\[[^\]:]+::[^\]]*\]|\([^)\s:]+::[^)]*\)/g, "") // [due:: …] (id:: …)
+          .replace(/\[[^\]]*\]\([^)]*\)/g, "")                       // [⏰](x-apple-reminder://…)
+          .replace(/[📅✅⏳🛫]\s*\d{4}-\d{2}-\d{2}/gu, "")
+          .replace(/📍.*$/u, "")                                         // location runs to the end
+          .replace(/(^|\s)#[^\s#]+/gu, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+        const day = `${y}${mo}${da}`;
+        if (!text || covered.has(Graph3DView.meetingKey(day, text))) continue;
+        const short = new Date(date).toLocaleDateString("sv-SE", { day: "numeric", month: "short" });
+        const id = `event:${f.path}#${li.position.start.line}`;
+        nodes.push({ id, name: `${short} ${text}`, type: NodeType.Event, sourcePath: f.path, date });
+        links.push({ source: f.path, target: id });
+      }
+    }
   }
 
   private cleanupNode(

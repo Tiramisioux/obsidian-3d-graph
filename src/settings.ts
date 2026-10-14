@@ -192,7 +192,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl).setName("Color Groups").setHeading();
     containerEl.createEl("p", {
-      text: 'Color nodes with custom rules. Use "path:", "tag:", "file:", or text match. Examples: path:folder, tag:#project, file:MyNote.md, file:*.pdf',
+      text: 'Color nodes with custom rules; the first matching group wins. Use "path:", "tag:", "file:", "prop:", "name:", or text match. Examples: path:folder, tag:#project, file:MyNote.md, file:*.pdf, prop:typ=hub, prop:källa=email|mail, prop:status (key set at all), name:. (every note — put it last as a catch-all)',
       cls: "setting-item-description",
     });
 
@@ -236,6 +236,36 @@ export class Graph3DSettingsTab extends PluginSettingTab {
         });
         await this.plugin.saveSettings();
         this.display();
+      }),
+    );
+
+    // fork: meetings (todos) as events
+    new Setting(containerEl).setName("Meetings").setHeading();
+    new Setting(containerEl)
+      .setName("Meeting todos as events")
+      .setDesc("A todo with the meeting tag and a due date ([due:: 2026-10-20 10:00]) becomes a node of its own, linked to its note and placed at its due date on the timeline. Skipped when a möte note (typ: möte) already covers it.")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.showEvents).onChange(async (v) => {
+          this.plugin.settings.showEvents = v;
+          await this.plugin.saveSettings();
+          this.triggerUpdate({ redrawData: true, useCache: true });
+        }),
+      );
+    new Setting(containerEl)
+      .setName("Meeting tag")
+      .setDesc("Without #. Default: röd.")
+      .addText((t) =>
+        t.setValue(this.plugin.settings.eventTag).onChange(async (v) => {
+          this.plugin.settings.eventTag = v.trim() || "röd";
+          await this.plugin.saveSettings();
+          this.triggerUpdate({ redrawData: true, useCache: true });
+        }),
+      );
+    new Setting(containerEl).setName("Meeting color").addColorPicker((c) =>
+      c.setValue(this.plugin.settings.colorEvent).onChange(async (v) => {
+        this.plugin.settings.colorEvent = v;
+        await this.plugin.saveSettings();
+        this.triggerUpdate({ updateDisplay: true });
       }),
     );
 

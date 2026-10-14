@@ -76,6 +76,12 @@ export interface Graph3DPluginSettings {
   flat2D: boolean;
   /** fork: trackpad two-finger drag pans the view (pinch still zooms) */
   trackpadPan: boolean;
+  /** fork: dated `#<eventTag>` todos become nodes of their own, at their due date */
+  showEvents: boolean;
+  /** fork: the tag that marks a meeting todo (without #) */
+  eventTag: string;
+  /** fork: colour of meeting/event nodes */
+  colorEvent: string;
   useKeyboardControls: boolean;
   keyboardMoveSpeed: number;
   zoomOnClick: boolean;
@@ -135,6 +141,9 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   timelineGrid: "off",
   flat2D: false,
   trackpadPan: true,
+  showEvents: true,
+  eventTag: "röd",
+  colorEvent: "#d32a32",
   useKeyboardControls: true,
   keyboardMoveSpeed: 2.0,
   zoomOnClick: true,
@@ -151,6 +160,8 @@ export enum NodeType {
   File,
   Tag,
   Attachment,
+  /** fork: a dated meeting todo (`#röd` + `[due:: …]`), shown at its own date */
+  Event,
 }
 
 export interface GraphNode {
@@ -168,6 +179,10 @@ export interface GraphNode {
   fx?: number;
   fy?: number;
   fz?: number;
+  /** fork (Event): the note the todo line lives in */
+  sourcePath?: string;
+  /** fork (Event): the todo's due date/time, epoch ms */
+  date?: number;
 }
 
 export interface GraphLink {
