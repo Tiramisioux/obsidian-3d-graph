@@ -182,6 +182,16 @@ export class Graph3DSettingsTab extends PluginSettingTab {
           this.triggerUpdate({ redrawData: true, useCache: true });
         }),
       );
+    new Setting(containerEl)
+      .setName("People in a tag view")
+      .setDesc("Person notes (typ: person) that carry the filtered tag. A person hub carries the tags of its projects, but it's a person, not project material — off by default.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showPeople).onChange(async (value) => {
+          this.plugin.settings.showPeople = value;
+          await this.plugin.saveSettings();
+          this.triggerUpdate({ redrawData: true, useCache: true });
+        }),
+      );
     new Setting(containerEl).setName("Show attachments").addToggle((toggle) =>
       toggle.setValue(this.plugin.settings.showAttachments).onChange(async (value) => {
         this.plugin.settings.showAttachments = value;
@@ -614,6 +624,15 @@ export class Graph3DSettingsTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.hoverPreview).onChange(async (value) => {
           this.plugin.settings.hoverPreview = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+    new Setting(containerEl)
+      .setName("Properties in the page preview")
+      .setDesc("Show the note's properties block at the top of the graph's page preview. Off: the preview starts with the note's text.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.hoverPreviewProperties).onChange(async (value) => {
+          this.plugin.settings.hoverPreviewProperties = value;
           await this.plugin.saveSettings();
         }),
       );

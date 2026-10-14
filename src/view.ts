@@ -171,6 +171,12 @@ export class Graph3DView extends ItemView {
   private switchPanel: SwitchPanel | null = null;
   private lastGridUnit: "week" | "month" | "auto" = "auto";
   private timelinePreviewFrame = 0;
+  /** fork: date → position on the time axis (grid frames) */
+  private timeToAxis: (t: number) => number = () => 0;
+  /** fork: ticks since a line layout started easing in */
+  private lineRamp = 0;
+  /** fork: physics ticks until the camera refits (0 = none pending) */
+  private fitAfterTicks = 0;
 
   private frustum = new THREE.Frustum();
   private projScreenMatrix = new THREE.Matrix4();
@@ -308,7 +314,7 @@ export class Graph3DView extends ItemView {
     resetViewButton.setAttribute("aria-label", "Reset view (zoom to fit)");
     resetViewButton.addEventListener("click", () => {
       if (this.graph && this.isGraphInitialized) {
-        this.graph.zoomToFit(800);
+        this.fitView(800);
       }
     });
 
@@ -350,6 +356,7 @@ export class Graph3DView extends ItemView {
       await this.updateData({ useCache: true, reheat: true });
     };
     const noTimeline = () => !st.timelineLayout;
+    const horiz = () => st.timelineAxis === "horizontal";
 
     panel.addSegmented({
       label: "Presentation",
@@ -378,8 +385,32 @@ export class Graph3DView extends ItemView {
       set: async (v) => { st.timelineLayout = v; await redraw(); },
       tooltip: "Order notes vertically by date",
     });
+    panel.addSegmented({
+      label: "Direction",
+      options: [
+        { value: "vertical", label: "Vertical", tooltip: "Time runs up/down" },
+        { value: "horizontal", label: "Horizontal", tooltip: "Time runs left → right" },
+      ],
+      get: () => st.timelineAxis,
+      set: (v) => this.setTimelineForm({ axis: v }),
+      tooltip: "Direction of the time axis",
+      commandId: "toggle-timeline-direction",
+      disabled: noTimeline,
+    });
+    panel.addSegmented({
+      label: "Shape",
+      options: [
+        { value: "spread", label: "Spread", tooltip: "Notes keep their links' shape across the time axis" },
+        { value: "line", label: "Line", tooltip: "Every dated note on one straight line" },
+      ],
+      get: () => st.timelineShape,
+      set: (v) => this.setTimelineForm({ shape: v }),
+      tooltip: "Spread across the axis, or one straight line",
+      commandId: "toggle-timeline-line",
+      disabled: noTimeline,
+    });
     panel.addSwitch({
-      label: "Newest at the top",
+      label: () => (horiz() ? "Newest on the left" : "Newest at the top"),
       get: () => st.timelineNewestTop,
       set: async (v) => { if (v !== st.timelineNewestTop) await this.toggleNewestTop(); },
       tooltip: "Reverse the timeline (newest at the top ↔ bottom)",
@@ -387,7 +418,7 @@ export class Graph3DView extends ItemView {
       disabled: noTimeline,
     });
     panel.addSlider({
-      label: "Height",
+      label: () => (horiz() ? "Width" : "Height"),
       min: 100,
       max: 3000,
       step: 50,
@@ -398,7 +429,7 @@ export class Graph3DView extends ItemView {
         await save();
         if (this.isSettingsPanelOpen()) this.renderSettingsPanel();
       },
-      tooltip: "Vertical scale: how tall the whole date range is (= Timeline length)",
+      tooltip: "Scale of the time axis: how long the whole date range is (= Timeline length)",
       disabled: noTimeline,
     });
     panel.addSwitch({
@@ -446,6 +477,13 @@ export class Graph3DView extends ItemView {
       set: async (v) => { st.showScopeTag = v; await save(); await this.updateData({ useCache: true, reheat: true }); },
       tooltip: "The node of the tag the graph is filtered on (e.g. #STOPP) — every note links to it",
       disabled: () => !st.showTags || !st.filters.some((f) => f.enabled && f.type === "tag" && f.value.trim() !== ""),
+    });
+    panel.addSwitch({
+      label: "People",
+      get: () => st.showPeople,
+      set: async (v) => { st.showPeople = v; await save(); await this.updateData({ useCache: true, reheat: true }); },
+      tooltip: "Person notes (typ: person) that carry the filtered tag — a person hub carries its projects' tags",
+      disabled: () => !st.filters.some((f) => f.enabled && f.type === "tag" && f.value.trim() !== ""),
     });
     panel.addSwitch({
       label: "Events",
@@ -781,6 +819,10 @@ export class Graph3DView extends ItemView {
     dates.forEach((d, i) => {
       if (d !== null) this.timelineTargets[i] = sign * ((d - lo) / span - 0.5) * L;
     });
+    // fork: date → time-axis position, for the grid; a line reshapes it
+    this.timeToAxis = (t) => sign * ((t - lo) / span - 0.5) * L;
+    this.lineRamp = 0;
+    if (this.settings.timelineShape === "line") this.spaceLine(dates, (sign * L) / span);
     this.storylineOrder = dates
       .map((d, i) => [d, i] as [number | null, number])
       .filter(([d, i]) => d !== null && (nodes[i].type === NodeType.File || nodes[i].type === NodeType.Event))
@@ -803,9 +845,8 @@ export class Graph3DView extends ItemView {
   /** faint square frames at each week (Monday) or month start, labelled,
    *  at the height the timeline maps that date to */
   private buildTimelineGrid(lo: number, hi: number) {
-    const span = hi - lo || 1, L = this.settings.timelineLength;
-    const sign = this.settings.timelineNewestTop ? 1 : -1;
-    const yOf = (t: number) => sign * ((t - lo) / span - 0.5) * L;
+    const span = hi - lo || 1;
+    const yOf = this.timeToAxis; // fork: on a line, through the spaced notes
     const DAY = 86400000;
     let unit = this.settings.timelineGrid;
     if (unit === "auto") unit = span <= 120 * DAY ? "week" : "month";
@@ -854,7 +895,9 @@ export class Graph3DView extends ItemView {
     this.timelineGridStops = [];
     for (const s of periods) {
       const sprite = new SpriteText(s.label, 4, this.getCssColor("--text-muted", "#666666"));
-      (sprite as any).center?.set?.(1, 0.5);
+      // fork: beside the frame; on a horizontal timeline centred under it
+      if (this.settings.timelineAxis === "horizontal") (sprite as any).center?.set?.(0.5, 1);
+      else (sprite as any).center?.set?.(1, 0.5);
       sprite.visible = false;
       group.add(sprite);
       this.timelineGridStops.push({ y: yOf(s.t), yEnd: yOf(Math.min(s.t1, hi)), t0: s.t, t1: s.t1, sprite });
@@ -868,6 +911,9 @@ export class Graph3DView extends ItemView {
     fill.visible = false;
     group.add(fill);
     this.timelineGridFill = fill;
+    // fork: the grid is built with time along local y; a horizontal timeline
+    // turns it 90° about z (local y → world −x, local x → world y)
+    if (this.settings.timelineAxis === "horizontal") group.rotation.z = Math.PI / 2;
     this.timelineGridGroup = group;
     this.graph.scene().add(group);
   }
@@ -881,13 +927,29 @@ export class Graph3DView extends ItemView {
   private applyTimeline(positions: Float32Array) {
     const timeline = this.settings.timelineLayout && this.timelineTargets.length * 4 <= positions.length;
     const flat = this.settings.flat2D;
-    const separated = this.separateLabels(positions); // fork: keep labels apart
+    const line = timeline && this.settings.timelineShape === "line";
+    // fork: keep labels apart — a line spaces its labels itself
+    const separated = line ? false : this.separateLabels(positions);
     if (!timeline && !flat && !separated) return;
     if (timeline) {
-      const k = this.settings.timelineStrength;
+      // fork: the time axis is world y (vertical) or world x with the oldest
+      // on the left (horizontal) — targets are in "time-axis" units either way
+      const horiz = this.settings.timelineAxis === "horizontal";
+      // a line eases in over ~30 ticks, then holds every dated note exactly
+      // on its spot: one straight line, nothing pulls it out of shape
+      const k = line ? Math.min(1, 0.1 + 0.03 * this.lineRamp++) : this.settings.timelineStrength;
       for (let i = 0; i < this.timelineTargets.length; i++) {
         const ty = this.timelineTargets[i];
-        if (!isNaN(ty)) positions[i * 4 + 1] += (ty - positions[i * 4 + 1]) * k;
+        if (isNaN(ty)) continue;
+        const ia = horiz ? i * 4 : i * 4 + 1; // along the time axis
+        const ip = horiz ? i * 4 + 1 : i * 4; // across it, in the view plane
+        const cur = horiz ? -positions[ia] : positions[ia];
+        const next = cur + (ty - cur) * k;
+        positions[ia] = horiz ? -next : next;
+        if (line) {
+          positions[ip] *= 1 - k;
+          positions[i * 4 + 2] *= 1 - k;
+        }
       }
     }
     if (flat) {
@@ -918,32 +980,38 @@ export class Graph3DView extends ItemView {
     const box = lr.labelBoxes();
     const n = Math.min(box.length / 3, positions.length / 4);
     if (n < 2) return false;
+    // sweep along the time axis (world y, or x on a horizontal timeline) and
+    // push across it, so a note keeps its date. Box: [w, h, centre above node]
+    const sw = this.settings.timelineLayout && this.settings.timelineAxis === "horizontal" ? 0 : 1;
+    const pu = 1 - sw;
+    const ext = (i: number, ax: number) => box[i * 3 + ax]; // ax 0 → width, 1 → height
+    const off = (i: number, ax: number) => (ax === 1 ? box[i * 3 + 2] : 0);
     if (this.separationY.length !== n) this.separationY = new Float32Array(n);
-    const cy = this.separationY, order = this.separationOrder;
+    const cs = this.separationY, order = this.separationOrder;
     order.length = n;
-    let maxH = 0;
+    let maxE = 0;
     for (let i = 0; i < n; i++) {
-      cy[i] = positions[i * 4 + 1] + box[i * 3 + 2];
-      if (box[i * 3 + 1] > maxH) maxH = box[i * 3 + 1];
+      cs[i] = positions[i * 4 + sw] + off(i, sw);
+      if (ext(i, sw) > maxE) maxE = ext(i, sw);
       order[i] = i;
     }
-    order.sort((a, b) => cy[a] - cy[b]);
+    order.sort((a, b) => cs[a] - cs[b]);
     const PAD = 1.5; // world units of air between two cards
     let moved = false;
     for (let a = 0; a < n; a++) {
       const i = order[a];
       for (let b = a + 1; b < n; b++) {
         const j = order[b];
-        const dy = cy[j] - cy[i];
-        if (dy >= maxH + PAD) break;
-        if (dy >= (box[i * 3 + 1] + box[j * 3 + 1]) / 2 + PAD) continue;
-        const dx = positions[j * 4] - positions[i * 4];
-        const overlap = (box[i * 3] + box[j * 3]) / 2 + PAD - Math.abs(dx);
+        const ds = cs[j] - cs[i];
+        if (ds >= maxE + PAD) break;
+        if (ds >= (ext(i, sw) + ext(j, sw)) / 2 + PAD) continue;
+        const dp = positions[j * 4 + pu] + off(j, pu) - positions[i * 4 + pu] - off(i, pu);
+        const overlap = (ext(i, pu) + ext(j, pu)) / 2 + PAD - Math.abs(dp);
         if (overlap <= 0) continue;
-        const dir = dx > 0 ? 1 : dx < 0 ? -1 : i < j ? 1 : -1;
+        const dir = dp > 0 ? 1 : dp < 0 ? -1 : i < j ? 1 : -1;
         const push = overlap * k * 0.5;
-        positions[j * 4] += dir * push;
-        positions[i * 4] -= dir * push;
+        positions[j * 4 + pu] += dir * push;
+        positions[i * 4 + pu] -= dir * push;
         moved = true;
       }
     }
@@ -969,9 +1037,12 @@ export class Graph3DView extends ItemView {
     if (!this.timelineGridLines || ++this.timelineGridTick % 5 !== 1) return;
     let n = 0, st = 0, sy = 0, stt = 0, sty = 0;
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    const horiz = this.settings.timelineAxis === "horizontal"; // fork: the grid's own frame
     for (let i = 0; i < this.timelineTargets.length; i++) {
       const t = this.timelineTargets[i];
-      const x = positions[i * 4], y = positions[i * 4 + 1], z = positions[i * 4 + 2];
+      const x = horiz ? positions[i * 4 + 1] : positions[i * 4];
+      const y = horiz ? -positions[i * 4] : positions[i * 4 + 1];
+      const z = positions[i * 4 + 2];
       if (x < minX) minX = x; if (x > maxX) maxX = x; if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
       if (isNaN(t)) continue;
       n++; st += t; sy += y; stt += t * t; sty += t * y;
@@ -980,14 +1051,15 @@ export class Graph3DView extends ItemView {
     if (n < 2 || varT <= 0) return;
     const a = (sty - (st * sy) / n) / varT, b = (sy - a * st) / n;
     const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
-    const half = Math.max(15, Math.max(maxX - minX, maxZ - minZ) / 2 * 1.15);
+    const minHalf = this.settings.timelineShape === "line" ? 25 : 15; // fork: a line has no spread
+    const half = Math.max(minHalf, Math.max(maxX - minX, maxZ - minZ) / 2 * 1.15);
     const lines = this.timelineGridLines;
     lines.scale.set(half, a, half);
     lines.position.set(cx, b, cz);
     lines.visible = true;
     this.timelineGridFit = { a, b, cx, cz, half };
     this.positionGridFill();
-    const labelH = Math.max(2.5, half / 18);
+    const labelH = Math.max(this.settings.timelineShape === "line" ? 6 : 2.5, half / 18); // fork: a line's frames are small
     for (const s of this.timelineGridStops) {
       s.sprite.position.set(cx - half - 1, a * s.y + b, cz - half);
       (s.sprite as any).textHeight = labelH;
@@ -1007,6 +1079,64 @@ export class Graph3DView extends ItemView {
       this.initTimeline(this.currentNodes);
       this.wakePhysics();
     });
+  }
+
+  /** fork: Line shape — every dated note on one straight line in date order.
+   *  Where dates crowd, the line stretches just enough that a note clears its
+   *  neighbour's label (vertical: the label above the lower note; horizontal:
+   *  half of both label widths); elsewhere the spacing stays true to the
+   *  dates. The grid follows through `timeToAxis`, piecewise through the
+   *  notes. `scale` = axis units per ms of the plain date line. */
+  private spaceLine(dates: (number | null)[], scale: number) {
+    const T = this.timelineTargets;
+    const idx: number[] = [];
+    for (let i = 0; i < T.length; i++) if (!isNaN(T[i])) idx.push(i);
+    if (idx.length < 2) return;
+    idx.sort((a, b) => T[a] - T[b] || a - b);
+    const box = this.settings.showNodeLabels && this.labelRenderer ? this.labelRenderer.labelBoxes() : null;
+    const horiz = this.settings.timelineAxis === "horizontal";
+    const PAD = 2;
+    const gap = (a: number, b: number) => {
+      if (!box || (Math.max(a, b) + 1) * 3 > box.length) return 4;
+      return horiz ? (box[a * 3] + box[b * 3]) / 2 + PAD : box[a * 3 + 2] + box[a * 3 + 1] / 2 + PAD;
+    };
+    const plain = idx.map((i) => T[i]);
+    for (let k = 1; k < idx.length; k++) {
+      const a = idx[k - 1], b = idx[k];
+      T[b] = Math.max(T[b], T[a] + gap(a, b));
+    }
+    // keep the line centred where the plain date line was
+    let shift = 0;
+    idx.forEach((i, k) => (shift += T[i] - plain[k]));
+    shift /= idx.length;
+    for (const i of idx) T[i] -= shift;
+    // date → axis through the notes (by date), straight beyond both ends
+    const pts = idx.map((i) => [dates[i] as number, T[i]]).sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+    const first = pts[0], last = pts[pts.length - 1];
+    this.timeToAxis = (t) => {
+      if (t <= first[0]) return first[1] + (t - first[0]) * scale;
+      if (t >= last[0]) return last[1] + (t - last[0]) * scale;
+      let k = 1;
+      while (k < pts.length - 1 && pts[k][0] < t) k++;
+      const [t0, y0] = pts[k - 1], [t1, y1] = pts[k];
+      return t1 === t0 ? y0 : y0 + ((t - t0) / (t1 - t0)) * (y1 - y0);
+    };
+  }
+
+  /** fork: direction / shape changed — new targets and grid for the current
+   *  nodes (no data reload), the layout follows; refit the camera */
+  public async setTimelineForm(change: { axis?: "vertical" | "horizontal"; shape?: "spread" | "line" }) {
+    const st = this.settings;
+    if (change.axis) st.timelineAxis = change.axis;
+    if (change.shape) st.timelineShape = change.shape;
+    await this.plugin.saveSettings();
+    if (this.isSettingsPanelOpen()) this.renderSettingsPanel();
+    if (!this.isGraphInitialized || !this.currentNodes.length) return;
+    this.initTimeline(this.currentNodes);
+    this.wakePhysics();
+    // refit once the notes have moved into the new form (a line eases in over
+    // ~30 ticks); a timer would frame the old layout
+    if (st.timelineLayout) this.fitAfterTicks = 40;
   }
 
   private clearStoryline() {
@@ -1040,7 +1170,11 @@ export class Graph3DView extends ItemView {
     const fit = this.timelineGridFit;
     if (!fit || !this.settings.timelineLayout || !this.settings.timelineGridHover || !this.timelineGridLines?.visible) return null;
     const { a, b, cx, cz, half } = fit;
-    const o = this.raycaster.ray.origin, d = this.raycaster.ray.direction;
+    // fork: the ray in the grid's own frame (turned 90° on a horizontal timeline)
+    const O = this.raycaster.ray.origin, D = this.raycaster.ray.direction;
+    const horiz = this.settings.timelineAxis === "horizontal";
+    const o = horiz ? { x: O.y, y: -O.x, z: O.z } : O;
+    const d = horiz ? { x: D.y, y: -D.x, z: D.z } : D;
     if (this.settings.flat2D) {
       if (Math.abs(d.z) < 1e-6) return null;
       const t = -o.z / d.z;
@@ -1134,7 +1268,7 @@ export class Graph3DView extends ItemView {
     await this.updateData({ useCache: false, reheat: true });
     window.setTimeout(() => {
       if (scope.focusId) this.flyToNode(scope.focusId);
-      else this.graph?.zoomToFit(800);
+      else this.fitView(800);
     }, 2200);
   }
 
@@ -1158,6 +1292,11 @@ export class Graph3DView extends ItemView {
     if (hit !== null) return hit;
     if (!this.settings.showNodeLabels || !this.labelRenderer || !this.graph) return null;
     return this.labelRenderer.getNodeIndexAtLabel(this.raycaster, this.graph.camera());
+  }
+
+  /** fork: a person note — `typ: person` (or the legacy `type: person`) */
+  private isPersonNote(path: string): boolean {
+    return this.frontmatterMatches(path, "typ", ["person"]) || this.frontmatterMatches(path, "type", ["person"]);
   }
 
   /** fork: does a note's frontmatter `key` (case-insensitive key) hold one of
@@ -1230,7 +1369,7 @@ export class Graph3DView extends ItemView {
       this.graph.camera().up.set(0, 1, 0);
     }
     this.physicsBridge.start();
-    window.setTimeout(() => this.graph?.zoomToFit(800), 1500);
+    window.setTimeout(() => this.fitView(800), 1500);
   }
 
   private presentationMode(): "network" | "timeline" | "storyline" {
@@ -1257,7 +1396,7 @@ export class Graph3DView extends ItemView {
     this.refreshReverseButton();
     if (this.isSettingsPanelOpen()) this.renderSettingsPanel();
     await this.updateData({ useCache: true, reheat: true });
-    window.setTimeout(() => this.graph?.zoomToFit(800), 1500);
+    window.setTimeout(() => this.fitView(800), 1500);
   }
 
   private renderTimelineSettings(container: HTMLElement) {
@@ -1277,6 +1416,14 @@ export class Graph3DView extends ItemView {
     new Setting(container).setName("Timeline strength").addSlider((s) =>
       s.setLimits(0.01, 0.5, 0.01).setValue(this.settings.timelineStrength).setDynamicTooltip()
         .onChange(async (v) => { this.settings.timelineStrength = v; await this.plugin.saveSettings(); }));
+    new Setting(container).setName("Direction").addDropdown((d) =>
+      d.addOptions({ vertical: "Vertical (up/down)", horizontal: "Horizontal (left → right)" })
+        .setValue(this.settings.timelineAxis)
+        .onChange((v) => this.setTimelineForm({ axis: v as "vertical" | "horizontal" })));
+    new Setting(container).setName("Shape").setDesc("Spread: the network keeps its shape across the axis. Line: every dated note on one straight line.").addDropdown((d) =>
+      d.addOptions({ spread: "Spread", line: "Straight line" })
+        .setValue(this.settings.timelineShape)
+        .onChange((v) => this.setTimelineForm({ shape: v as "spread" | "line" })));
     new Setting(container).setName("Timeline length").addSlider((s) =>
       s.setLimits(100, 3000, 50).setValue(this.settings.timelineLength).setDynamicTooltip()
         .onChange(async (v) => { this.settings.timelineLength = v; await redraw(); }));
@@ -2408,10 +2555,52 @@ export class Graph3DView extends ItemView {
     // Once nothing has moved more than SETTLE_EPS for SETTLE_TICKS ticks the
     // layout is at rest: stop stepping. Drag, settings and data changes wake it.
     this.settleTicks = maxDelta < Graph3DView.SETTLE_EPS ? this.settleTicks + 1 : 0;
-    if (this.settleTicks >= Graph3DView.SETTLE_TICKS) {
+    const settled = this.settleTicks >= Graph3DView.SETTLE_TICKS;
+    if (settled) {
       this.settleTicks = 0;
       this.physicsBridge.stop();
     }
+    if (this.fitAfterTicks > 0 && (--this.fitAfterTicks === 0 || settled)) {
+      this.fitAfterTicks = 0;
+      this.fitView(600);
+    }
+  }
+
+  /** fork: frame every node, keeping the current viewing direction. The
+   *  library's zoomToFit() measures its own node objects, which this plugin
+   *  hides and never moves (positions live in the physics buffer), so it did
+   *  nothing — the reset button and every "fit" after a scope change too. */
+  public fitView(ms = 800) {
+    const P = this.currentPositions, n = Math.min(this.currentNodes.length, P.length / 4);
+    const cam = this.graph?.camera() as THREE.PerspectiveCamera | undefined;
+    const controls = this.graph?.controls() as any;
+    if (!cam || !controls?.target || n === 0) return;
+    const lo = new THREE.Vector3(Infinity, Infinity, Infinity), hi = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+    for (let i = 0; i < n; i++) {
+      lo.min(new THREE.Vector3(P[i * 4], P[i * 4 + 1], P[i * 4 + 2]));
+      hi.max(new THREE.Vector3(P[i * 4], P[i * 4 + 1], P[i * 4 + 2]));
+    }
+    const centre = lo.clone().add(hi).multiplyScalar(0.5);
+    const dir = cam.position.clone().sub(controls.target);
+    if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
+    dir.normalize();
+    // half extents as seen along the viewing direction
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).normalize();
+    const up = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1).normalize();
+    let w = 0, h = 0, depth = 0;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < n; i++) {
+      v.set(P[i * 4], P[i * 4 + 1], P[i * 4 + 2]).sub(centre);
+      w = Math.max(w, Math.abs(v.dot(right)));
+      h = Math.max(h, Math.abs(v.dot(up)));
+      depth = Math.max(depth, v.dot(dir));
+    }
+    const PAD = 25; // room for the labels round the outermost notes
+    const tanV = Math.tan(((cam.fov || 50) * Math.PI) / 360);
+    const aspect = cam.aspect || 1;
+    const dist = Math.max((h + PAD) / tanV, (w + PAD) / (tanV * aspect), 40) * 1.08 + Math.max(0, depth);
+    const pos = centre.clone().add(dir.multiplyScalar(dist));
+    this.graph.cameraPosition({ x: pos.x, y: pos.y, z: pos.z }, { x: centre.x, y: centre.y, z: centre.z }, ms);
   }
   private static readonly SETTLE_EPS = 0.01; // world units per tick (a label is ~45 wide)
   private static readonly SETTLE_TICKS = 30;
@@ -2577,7 +2766,20 @@ export class Graph3DView extends ItemView {
   // own 2D graph uses: targetEl null (the popover follows the pointer event),
   // and the view is the hoverParent, so it can tell the popover when the
   // pointer leaves the node.
-  hoverPopover: any = null;
+  // fork: Obsidian hands the page preview to its hover parent through this
+  // property; the setter tags it so the graph's previews can be styled apart
+  // (no properties block unless asked — styles.css)
+  private graphHoverPopover: any = null;
+  get hoverPopover(): any {
+    return this.graphHoverPopover;
+  }
+  set hoverPopover(pop: any) {
+    this.graphHoverPopover = pop;
+    const el: HTMLElement | undefined = pop?.hoverEl;
+    if (!el) return;
+    el.addClass("graph-3d-hover-preview");
+    el.toggleClass("graph-3d-hide-properties", !this.settings.hoverPreviewProperties);
+  }
   private lastHoverLink: string | null = null;
 
   private showHoverPreview(node: GraphNode, event: PointerEvent) {
@@ -2717,6 +2919,9 @@ export class Graph3DView extends ItemView {
       if (node.type === NodeType.Tag) {
         return node.name.toLowerCase() === `#${tagToMatch}`;
       }
+      // fork: a person hub carries the tags of its projects, but it's a person,
+      // not project material — kept out of a tag (project) view unless asked
+      if (!this.settings.showPeople && node.type === NodeType.File && this.isPersonNote(node.id)) return false;
       return node.tags?.some((tag) => tag.toLowerCase() === tagToMatch) ?? false;
     }
     return false;

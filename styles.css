@@ -349,3 +349,15 @@
 .graph-3d-switch-header:focus-visible {
 	box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
 }
+
+/* fork: the graph's page preview without the properties block (setting
+   "Properties in the page preview", off by default) */
+.graph-3d-hide-properties {
+	/* Obsidian's own switches for the block (reading / editing view) */
+	--metadata-display-reading: none;
+	--metadata-display-editing: none;
+}
+
+.graph-3d-hide-properties .metadata-container {
+	display: none;
+}

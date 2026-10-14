@@ -67,8 +67,15 @@ export interface Graph3DPluginSettings {
   labelSeparation: number;
   /** fork: Obsidian page preview when hovering a note node */
   hoverPreview: boolean;
+  /** fork: the properties block (Egenskaper) in that page preview */
+  hoverPreviewProperties: boolean;
   /** fork: pull notes along the vertical axis by date */
   timelineLayout: boolean;
+  /** fork: the time axis — up/down (vertical) or left/right (horizontal) */
+  timelineAxis: "vertical" | "horizontal";
+  /** fork: spread (the network keeps its shape across the axis) or line
+   *  (every dated note on one straight line) */
+  timelineShape: "spread" | "line";
   /** fork: how hard notes are pulled to their date (0.01–0.5) */
   timelineStrength: number;
   /** fork: length of the time axis in world units */
@@ -92,6 +99,9 @@ export interface Graph3DPluginSettings {
   /** fork: show the node of the tag the graph is filtered on (a project
    *  scope) — every note links to it, which pulls the layout into one knot */
   showScopeTag: boolean;
+  /** fork: person notes (`typ: person`) in a tag-filtered view — a person
+   *  hub carries its projects' tags but isn't project material */
+  showPeople: boolean;
   /** fork: the tag that marks a meeting todo (without #) */
   eventTag: string;
   /** fork: colour of meeting/event nodes */
@@ -152,7 +162,10 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   labelTintHoverOpacity: 0.45,
   labelSeparation: 1,
   hoverPreview: true,
+  hoverPreviewProperties: false,
   timelineLayout: false,
+  timelineAxis: "vertical",
+  timelineShape: "spread",
   timelineStrength: 0.08,
   timelineLength: 600,
   timelineNewestTop: false,
@@ -164,6 +177,7 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   trackpadPan: true,
   showEvents: true,
   showScopeTag: false,
+  showPeople: false,
   eventTag: "röd",
   colorEvent: "#d32a32",
   useKeyboardControls: true,

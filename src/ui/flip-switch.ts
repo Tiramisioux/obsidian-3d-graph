@@ -11,8 +11,12 @@ import { setIcon } from "obsidian";
  *   panel.addSwitch({ label: "Labels", get: () => s.showNodeLabels, set: (v) => … });
  */
 
+/** fork: a control's label — fixed, or re-read on every refresh */
+export type Label = string | (() => string);
+const labelText = (l: Label) => (typeof l === "function" ? l() : l);
+
 export interface FlipSwitchSpec {
-  label: string;
+  label: Label;
   get: () => boolean;
   set: (value: boolean) => unknown | Promise<unknown>;
   /** tooltip text (the hotkey hint is appended) */
@@ -24,7 +28,7 @@ export interface FlipSwitchSpec {
 }
 
 export interface SegmentedSwitchSpec<T extends string> {
-  label: string;
+  label: Label;
   options: { value: T; label: string; tooltip?: string }[];
   get: () => T;
   set: (value: T) => unknown | Promise<unknown>;
@@ -34,7 +38,7 @@ export interface SegmentedSwitchSpec<T extends string> {
 }
 
 export interface SliderSpec {
-  label: string;
+  label: Label;
   min: number;
   max: number;
   step: number;
@@ -106,13 +110,13 @@ export class SwitchPanel {
     this.body.createDiv({ cls: "graph-3d-switch-heading", text });
   }
 
-  private tooltipFor(spec: { label: string; tooltip?: string; commandId?: string }) {
-    return (spec.tooltip ?? spec.label) + (spec.commandId ? this.opts.hotkeyHint(spec.commandId) : "");
+  private tooltipFor(spec: { label: Label; tooltip?: string; commandId?: string }) {
+    return (spec.tooltip ?? labelText(spec.label)) + (spec.commandId ? this.opts.hotkeyHint(spec.commandId) : "");
   }
 
   addSwitch(spec: FlipSwitchSpec) {
     const row = this.body.createDiv({ cls: "graph-3d-switch-row" });
-    row.createSpan({ cls: "graph-3d-switch-label", text: spec.label });
+    const label = row.createSpan({ cls: "graph-3d-switch-label" });
     // Obsidian's native toggle: div.checkbox-container(.is-enabled) > input
     const box = row.createDiv({ cls: "checkbox-container graph-3d-flip", attr: { role: "switch", tabindex: "0" } });
     const input = box.createEl("input", { attr: { type: "checkbox", tabindex: "-1" } });
@@ -137,6 +141,7 @@ export class SwitchPanel {
       box.toggleClass("is-enabled", on);
       input.checked = on;
       box.setAttribute("aria-checked", String(on));
+      label.setText(labelText(spec.label));
       row.toggleClass("is-disabled", disabled);
       row.setAttribute("aria-label", this.tooltipFor(spec));
     };
@@ -146,7 +151,7 @@ export class SwitchPanel {
 
   addSegmented<T extends string>(spec: SegmentedSwitchSpec<T>) {
     const row = this.body.createDiv({ cls: "graph-3d-switch-row graph-3d-switch-row-segmented" });
-    row.createSpan({ cls: "graph-3d-switch-label", text: spec.label });
+    const label = row.createSpan({ cls: "graph-3d-switch-label" });
     const group = row.createDiv({ cls: "graph-3d-segmented", attr: { role: "radiogroup" } });
     const buttons = spec.options.map((o) => {
       const b = group.createEl("button", { cls: "graph-3d-segment", text: o.label, attr: { role: "radio" } });
@@ -167,6 +172,7 @@ export class SwitchPanel {
         b.setAttribute("aria-checked", String(o.value === cur));
         b.disabled = disabled;
       }
+      label.setText(labelText(spec.label));
       row.toggleClass("is-disabled", disabled);
       row.setAttribute("aria-label", this.tooltipFor(spec));
     };
@@ -179,7 +185,7 @@ export class SwitchPanel {
   addSlider(spec: SliderSpec) {
     const row = this.body.createDiv({ cls: "graph-3d-switch-row graph-3d-switch-row-slider" });
     const head = row.createDiv({ cls: "graph-3d-switch-slider-head" });
-    head.createSpan({ cls: "graph-3d-switch-label", text: spec.label });
+    const label = head.createSpan({ cls: "graph-3d-switch-label" });
     const value = head.createSpan({ cls: "graph-3d-switch-value" });
     const input = row.createEl("input", {
       cls: "slider graph-3d-slider",
@@ -209,6 +215,7 @@ export class SwitchPanel {
     const refresh = () => {
       const disabled = !!spec.disabled?.();
       input.disabled = disabled;
+      label.setText(labelText(spec.label));
       row.toggleClass("is-disabled", disabled);
       row.setAttribute("aria-label", this.tooltipFor(spec));
       if (dragging) return;

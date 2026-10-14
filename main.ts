@@ -36,6 +36,23 @@ export default class Graph3DPlugin extends Plugin {
 			},
 		});
 
+		// fork: timeline direction and shape (no default hotkeys — bind your own)
+		const eachView = (fn: (v: Graph3DView) => unknown) =>
+			this.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH).forEach((leaf) => {
+				if (leaf.view instanceof Graph3DView) fn(leaf.view);
+			});
+		this.addCommand({
+			id: "toggle-timeline-direction",
+			name: "Timeline: vertical ↔ horizontal",
+			callback: () =>
+				eachView((v) => v.setTimelineForm({ axis: this.settings.timelineAxis === "horizontal" ? "vertical" : "horizontal" })),
+		});
+		this.addCommand({
+			id: "toggle-timeline-line",
+			name: "Timeline: spread ↔ straight line",
+			callback: () => eachView((v) => v.setTimelineForm({ shape: this.settings.timelineShape === "line" ? "spread" : "line" })),
+		});
+
 		this.addCommand({
 			id: "toggle-2d",
 			name: "Toggle 2D mode",
