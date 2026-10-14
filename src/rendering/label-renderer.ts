@@ -283,6 +283,14 @@ export class InstancedLabelRenderer {
       this.atlasCtx.fillStyle = bgColor;
       this.drawRoundedRect(this.atlasCtx, x, y, boxWidth, boxHeight, borderRadius);
       this.atlasCtx.fill();
+      // fork: faint rounded outline in the text colour, so overlapping labels
+      // read as separate cards
+      if (settings.labelBorderOpacity > 0) {
+        this.atlasCtx.strokeStyle = this.hexToRgba(textColor, settings.labelBorderOpacity);
+        this.atlasCtx.lineWidth = 1.5;
+        this.drawRoundedRect(this.atlasCtx, x + 0.75, y + 0.75, boxWidth - 1.5, boxHeight - 1.5, borderRadius);
+        this.atlasCtx.stroke();
+      }
 
       // Draw text
       this.atlasCtx.fillStyle = textColor;
@@ -413,7 +421,9 @@ export class InstancedLabelRenderer {
         uAtlas: { value: this.atlasTexture },
       },
       transparent: true,
-      depthWrite: false,
+      // fork: write depth, so a nearer label's card covers a farther one
+      // instead of the two texts blending into each other
+      depthWrite: true,
       side: THREE.DoubleSide,
     });
 

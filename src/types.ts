@@ -56,6 +56,8 @@ export interface Graph3DPluginSettings {
   labelUnderscoresToSpaces: boolean;
   /** fork: wrap labels at about this many characters per line (0 = one line) */
   labelWrapChars: number;
+  /** fork: faint outline round the label pill (0 = none) */
+  labelBorderOpacity: number;
   /** fork: Obsidian page preview when hovering a note node */
   hoverPreview: boolean;
   /** fork: pull notes along the vertical axis by date */
@@ -121,6 +123,7 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   labelStripPattern: "",
   labelUnderscoresToSpaces: false,
   labelWrapChars: 22,
+  labelBorderOpacity: 0.18,
   hoverPreview: true,
   timelineLayout: false,
   timelineStrength: 0.08,

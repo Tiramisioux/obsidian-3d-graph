@@ -432,7 +432,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
         .onChange(async (v) => {
           this.plugin.settings.labelTextSize = v;
           await this.plugin.saveSettings();
-          this.triggerUpdate({ updateDisplay: true });
+          this.triggerUpdate({ redrawData: true, useCache: true }); // fork: labels are baked into the atlas — rebuild
         }),
     );
 
@@ -475,23 +475,37 @@ export class Graph3DSettingsTab extends PluginSettingTab {
       c.setValue(this.plugin.settings.labelTextColorDark).onChange(async (v) => {
         this.plugin.settings.labelTextColorDark = v;
         await this.plugin.saveSettings();
-        this.triggerUpdate({ updateDisplay: true });
+        this.triggerUpdate({ redrawData: true, useCache: true }); // fork: labels are baked into the atlas — rebuild
       }),
     );
     new Setting(containerEl).setName("Label Text Color (Light Theme)").addColorPicker((c) =>
       c.setValue(this.plugin.settings.labelTextColorLight).onChange(async (v) => {
         this.plugin.settings.labelTextColorLight = v;
         await this.plugin.saveSettings();
-        this.triggerUpdate({ updateDisplay: true });
+        this.triggerUpdate({ redrawData: true, useCache: true }); // fork: labels are baked into the atlas — rebuild
       }),
     );
     new Setting(containerEl).setName("Label Background Color").addColorPicker((c) =>
       c.setValue(this.plugin.settings.labelBackgroundColor).onChange(async (v) => {
         this.plugin.settings.labelBackgroundColor = v;
         await this.plugin.saveSettings();
-        this.triggerUpdate({ updateDisplay: true });
+        this.triggerUpdate({ redrawData: true, useCache: true }); // fork: labels are baked into the atlas — rebuild
       }),
     );
+    new Setting(containerEl)
+      .setName("Label border opacity")
+      .setDesc("A faint rounded outline round each label, so overlapping labels stay apart. 0 = none.")
+      .addSlider((s) =>
+        s
+          .setLimits(0, 1, 0.02)
+          .setValue(this.plugin.settings.labelBorderOpacity)
+          .setDynamicTooltip()
+          .onChange(async (v) => {
+            this.plugin.settings.labelBorderOpacity = v;
+            await this.plugin.saveSettings();
+            this.triggerUpdate({ redrawData: true, useCache: true });
+          }),
+      );
     new Setting(containerEl).setName("Label Background Opacity").addSlider((s) =>
       s
         .setLimits(0, 1, 0.1)
@@ -500,7 +514,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
         .onChange(async (v) => {
           this.plugin.settings.labelBackgroundOpacity = v;
           await this.plugin.saveSettings();
-          this.triggerUpdate({ updateDisplay: true });
+          this.triggerUpdate({ redrawData: true, useCache: true }); // fork: labels are baked into the atlas — rebuild
         }),
     );
 
