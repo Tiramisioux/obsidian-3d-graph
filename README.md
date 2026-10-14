@@ -80,3 +80,24 @@ Go to `Settings` > `3D Graph Plugin` or use the in-graph floating settings gear 
 - **Rust & WebAssembly**: High-performance physics core using `glam` SIMD vector math, `wasm-bindgen`, and `wasm-opt`.
 - **Three.js**: 3D scene rendering, lighting, and GPU instancing.
 - Built with ❤️ for the Obsidian community.
+
+---
+
+## Tiramisioux fork
+
+Branch `tiramisioux` of [Tiramisioux/obsidian-3d-graph](https://github.com/Tiramisioux/obsidian-3d-graph), installed as its own plugin id **`new-3d-graph-tiramisioux`** ("New 3D Graph (Tiramisioux fork)") so community updates of the original never overwrite it.
+
+| Change | Where |
+|---|---|
+| **Label fix** — the label atlas was uploaded with `flipY`, while the shader uses top-down canvas UVs; with a filter / small graph every label sampled empty atlas rows and was discarded (reported upstream: [Apoo711/obsidian-3d-graph#16](https://github.com/Apoo711/obsidian-3d-graph/issues/16)) | `src/rendering/label-renderer.ts` |
+| **Label formatting** — *Strip from label (regex)* and *Underscores as spaces*; search still matches the full name; tag labels untouched | `formatLabel()` in `label-renderer.ts`, settings in `src/types.ts` / `src/settings.ts` |
+| **Page preview on hover** — Obsidian's native preview when hovering a note node (core *Page preview* plugin; same contract as Obsidian's 2D graph: `targetEl: null`, view as `hoverParent`) | `showHoverPreview()` in `src/view.ts`, hover source registered in `main.ts` |
+
+Build (the WASM physics is prebuilt in `src/physics/wasm-data.ts`; `wasm-pack` only needed when changing `crates/`):
+
+```bash
+npm ci && npx tsc -noEmit -skipLibCheck && node esbuild.config.mjs production
+```
+
+Install: copy `main.js`, `manifest.json`, `styles.css` into `<vault>/.obsidian/plugins/new-3d-graph-tiramisioux/`.
+Example label setting for Zettelkasten names `20261014104013 RISE UND inspo_verksamhetslogik` → `inspo verksamhetslogik`: strip `^\d{14}\s+(?:[A-ZÅÄÖ0-9_]+\s+){0,2}` + underscores as spaces.

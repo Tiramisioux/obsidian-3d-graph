@@ -59,6 +59,27 @@ const LABEL_FRAG = /* glsl */ `
   }
 `;
 
+/**
+ * fork: label text for a note/attachment — the file name minus
+ * `labelStripPattern` (a regex, e.g. `^\\d{14}\\s+` for a Zettelkasten
+ * timestamp), optionally with underscores shown as spaces. Never empty:
+ * falls back to the unformatted name.
+ */
+export function formatLabel(name: string, settings: Graph3DPluginSettings): string {
+  let out = name;
+  const pattern = (settings.labelStripPattern || "").trim();
+  if (pattern) {
+    try {
+      out = out.replace(new RegExp(pattern, "u"), "");
+    } catch {
+      /* invalid regex: leave the name as is */
+    }
+  }
+  if (settings.labelUnderscoresToSpaces) out = out.replace(/_/g, " ");
+  out = out.trim();
+  return out || name;
+}
+
 export class InstancedLabelRenderer {
   private scene: THREE.Scene;
   private atlasCanvas: HTMLCanvasElement;
@@ -122,7 +143,7 @@ export class InstancedLabelRenderer {
       }
       return {
         id: node.id,
-        name: node.name || node.id,
+        name: node.type === NodeType.Tag ? node.name || node.id : formatLabel(node.name || node.id, settings),
         type: node.type,
         nodeIndex: idx,
         size: size * 1.5,
@@ -260,6 +281,9 @@ export class InstancedLabelRenderer {
       this.atlasTexture.dispose();
     }
     this.atlasTexture = new THREE.CanvasTexture(this.atlasCanvas);
+    // fork fix: the shader's UVs are top-down canvas coordinates; the default
+    // flipY upload made every label sample the wrong (often empty) atlas rows
+    this.atlasTexture.flipY = false;
     this.atlasTexture.minFilter = THREE.LinearFilter;
     this.atlasTexture.magFilter = THREE.LinearFilter;
     this.atlasTexture.generateMipmaps = false;

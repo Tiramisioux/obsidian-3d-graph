@@ -436,6 +436,27 @@ export class Graph3DSettingsTab extends PluginSettingTab {
         }),
     );
 
+    new Setting(containerEl)
+      .setName("Strip from label (regex)")
+      .setDesc("Removed from note and attachment labels, e.g. ^\\d{14}\\s+ for a Zettelkasten timestamp. Search still matches the full name.")
+      .addText((text) =>
+        text
+          .setPlaceholder("^\\d{14}\\s+")
+          .setValue(this.plugin.settings.labelStripPattern)
+          .onChange(async (v) => {
+            this.plugin.settings.labelStripPattern = v;
+            await this.plugin.saveSettings();
+            this.triggerUpdate({ redrawData: true, useCache: true });
+          }),
+      );
+    new Setting(containerEl).setName("Underscores as spaces in labels").addToggle((toggle) =>
+      toggle.setValue(this.plugin.settings.labelUnderscoresToSpaces).onChange(async (value) => {
+        this.plugin.settings.labelUnderscoresToSpaces = value;
+        await this.plugin.saveSettings();
+        this.triggerUpdate({ redrawData: true, useCache: true });
+      }),
+    );
+
     new Setting(containerEl).setName("Label Text Color (Dark Theme)").addColorPicker((c) =>
       c.setValue(this.plugin.settings.labelTextColorDark).onChange(async (v) => {
         this.plugin.settings.labelTextColorDark = v;
@@ -477,6 +498,15 @@ export class Graph3DSettingsTab extends PluginSettingTab {
     );
 
     new Setting(containerEl).setName("Interaction").setHeading();
+    new Setting(containerEl)
+      .setName("Page preview on hover")
+      .setDesc("Show Obsidian's page preview when hovering a note. Needs the core Page preview plugin; a modifier key can be required under Settings → Page preview → 3D Graph.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.hoverPreview).onChange(async (value) => {
+          this.plugin.settings.hoverPreview = value;
+          await this.plugin.saveSettings();
+        }),
+      );
     new Setting(containerEl)
       .setName("Use Keyboard Controls (WASD)")
       .setDesc("Enable game-like controls for camera movement.")

@@ -13,6 +13,12 @@ export default class Graph3DPlugin extends Plugin {
 			(leaf) => new Graph3DView(leaf, this),
 		);
 		this.addSettingTab(new Graph3DSettingsTab(this.app, this));
+		// fork: page preview on node hover (no modifier key by default;
+		// configurable under Settings → Page preview)
+		this.registerHoverLinkSource(this.manifest.id, {
+			display: "3D Graph",
+			defaultMod: false,
+		});
 		this.addRibbonIcon("network", "Open 3d graph", () =>
 			this.activateView(),
 		);

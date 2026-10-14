@@ -795,7 +795,7 @@ export class Graph3DView extends ItemView {
         const hitIdx = this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions);
         const node = hitIdx !== null ? this.currentNodes[hitIdx] : null;
         if (node !== this.hoveredNode) {
-          this.handleNodeHover(node);
+          this.handleNodeHover(node, e);
         }
       }
     });
@@ -1519,7 +1519,41 @@ export class Graph3DView extends ItemView {
     this.updateLabels();
   }
 
-  private handleNodeHover(node: GraphNode | null) {
+  // fork: Obsidian page preview on node hover — the same contract Obsidian's
+  // own 2D graph uses: targetEl null (the popover follows the pointer event),
+  // and the view is the hoverParent, so it can tell the popover when the
+  // pointer leaves the node.
+  hoverPopover: any = null;
+  private lastHoverLink: string | null = null;
+
+  private showHoverPreview(node: GraphNode, event: PointerEvent) {
+    if (!this.plugin.settings.hoverPreview || node.type !== NodeType.File) return;
+    const pop = this.hoverPopover;
+    if (pop && pop.state !== 0 /* not hidden */ && this.lastHoverLink === node.id) {
+      pop.onTarget = true;
+      pop.transition();
+      return;
+    }
+    this.lastHoverLink = node.id;
+    this.app.workspace.trigger("hover-link", {
+      event,
+      source: this.plugin.manifest.id,
+      hoverParent: this,
+      targetEl: null,
+      linktext: node.id,
+      sourcePath: "",
+    });
+  }
+
+  private endHoverPreview() {
+    const pop = this.hoverPopover;
+    if (pop) {
+      pop.onTarget = false;
+      pop.transition();
+    }
+  }
+
+  private handleNodeHover(node: GraphNode | null, event?: PointerEvent) {
     if (this.hoveredNode && this.hoveredNode !== node) {
       this.hoveredNode.fx = undefined;
       this.hoveredNode.fy = undefined;
@@ -1532,6 +1566,9 @@ export class Graph3DView extends ItemView {
       this.hoveredNode.fy = this.hoveredNode.y;
       this.hoveredNode.fz = this.hoveredNode.z;
     }
+
+    if (node && event) this.showHoverPreview(node, event);
+    else this.endHoverPreview();
 
     this.highlightedNodes.clear();
     this.highlightedLinks.clear();

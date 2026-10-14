@@ -50,6 +50,12 @@ export interface Graph3DPluginSettings {
   labelBackgroundColor: string;
   labelBackgroundOpacity: number;
   labelOcclusion: boolean;
+  /** fork: regex removed from file-name labels (e.g. a Zettelkasten timestamp) */
+  labelStripPattern: string;
+  /** fork: show underscores in labels as spaces */
+  labelUnderscoresToSpaces: boolean;
+  /** fork: Obsidian page preview when hovering a note node */
+  hoverPreview: boolean;
   useKeyboardControls: boolean;
   keyboardMoveSpeed: number;
   zoomOnClick: boolean;
@@ -96,6 +102,9 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   labelBackgroundColor: "#ffffff",
   labelBackgroundOpacity: 0.3,
   labelOcclusion: false,
+  labelStripPattern: "",
+  labelUnderscoresToSpaces: false,
+  hoverPreview: true,
   useKeyboardControls: true,
   keyboardMoveSpeed: 2.0,
   zoomOnClick: true,
