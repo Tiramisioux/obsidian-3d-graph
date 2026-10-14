@@ -2,7 +2,7 @@
 
 A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Aryan Gupta, with fixes and extra ways to present your vault. Everything from the original works the same; this fork adds what's listed below.
 
-> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.5 · **based on:** 2.8.1
+> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.6 · **based on:** 2.8.1
 > It has its own id on purpose: a community-store update of the original can never overwrite it.
 
 ## What this fork adds
@@ -14,7 +14,7 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 | 🏷 | **Label cards that don't blur together** | Each label is a rounded card with a faint outline (*Settings → Label border opacity*), and a nearer label covers a farther one instead of the texts mixing. Set *Label Background Opacity* to 1 for fully opaque cards. The label settings (size, colours, opacity) now apply immediately instead of after a reload. |
 | ↩️ | **Labels on several lines** | Long labels wrap at word boundaries — about 22 characters per line, up to 3 lines (*Settings → Label line width*; 0 = one line, cut at 40 characters). |
 | 👁 | **Page preview on hover** | Hover a note node to see Obsidian's page preview. Needs the core *Page preview* plugin. Turn it off under *Settings → Page preview on hover*, or require a modifier key under *Settings → Page preview → 3D Graph*. |
-| 🕰 | **Timeline layout** | Notes are pulled **vertically by date** — oldest at the top, newest at the bottom (or the other way with *Newest at the top*). Links still cluster related notes, so it's a rough timeline, not a ruler. |
+| 🕰 | **Timeline layout** | Notes are pulled **vertically by date** — oldest at the top, newest at the bottom. **Reverse it** (newest at the top) with the toolbar's arrow button, **⌥⌘L**, or graph ⚙ → *Timeline → Newest at the top*. Links still cluster related notes, so it's a rough timeline, not a ruler. |
 | 🧵 | **Storyline** | A thin line threads through the notes in date order, so you can follow the story from first note to last. |
 | 🗓 | **Time grid** | In timeline view: faint frames at each **week** (labelled *v. 42*) or **month** (*okt. 2026*) — graph ⚙ → *Timeline → Time grid* (Off / Weeks / Months / Auto). The frames follow where the notes actually are; seen from above they stack like floors. |
 | ⬜ | **2D mode** | Flattens the graph into a plane facing you — pan and zoom, no rotation. With the timeline it becomes a flat time chart, the time grid seen as labelled lines. Toolbar button (square/box icon), graph ⚙ → *Timeline → 2D mode*, or the command *Toggle 2D mode*. |
@@ -27,6 +27,7 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 |---|---|
 | **⌘⇧G** | show the active note in the 3D graph — its project, the note highlighted |
 | **⌥⌘G** | next presentation: network → timeline → timeline + storyline |
+| **⌥⌘L** | reverse the timeline: newest at the top ↔ oldest at the top |
 
 Defaults set by the fork; change them under *Settings → Hotkeys* (search "3D graph").
 

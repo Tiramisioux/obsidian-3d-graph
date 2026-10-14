@@ -24,6 +24,19 @@ export default class Graph3DPlugin extends Plugin {
 		);
 
 		this.addCommand({
+			id: "toggle-newest-top",
+			name: "Reverse timeline (newest at the top ↔ bottom)",
+			hotkeys: [{ modifiers: ["Mod", "Alt"], key: "L" }],
+			callback: () => {
+				this.app.workspace
+					.getLeavesOfType(VIEW_TYPE_3D_GRAPH)
+					.forEach((leaf) => {
+						if (leaf.view instanceof Graph3DView) leaf.view.toggleNewestTop();
+					});
+			},
+		});
+
+		this.addCommand({
 			id: "toggle-2d",
 			name: "Toggle 2D mode",
 			callback: () => {

@@ -260,6 +260,13 @@ export class Graph3DView extends ItemView {
     this.refreshPresentationButton();
     this.presentationButton.addEventListener("click", () => this.cyclePresentation());
 
+    // fork: reverse the timeline (newest at the top / bottom)
+    this.reverseButton = controlsContainer.createEl("div", {
+      cls: "graph-3d-reset-toggle graph-3d-reverse-toggle",
+    });
+    this.refreshReverseButton();
+    this.reverseButton.addEventListener("click", () => this.toggleNewestTop());
+
     // fork: 2D / 3D switch
     this.flatButton = controlsContainer.createEl("div", {
       cls: "graph-3d-reset-toggle graph-3d-flat-toggle",
@@ -789,6 +796,25 @@ export class Graph3DView extends ItemView {
 
   private presentationButton: HTMLElement | null = null;
   private flatButton: HTMLElement | null = null;
+  private reverseButton: HTMLElement | null = null;
+
+  private refreshReverseButton() {
+    if (!this.reverseButton) return;
+    this.reverseButton.empty();
+    const top = this.settings.timelineNewestTop;
+    setIcon(this.reverseButton, top ? "arrow-up-narrow-wide" : "arrow-down-narrow-wide");
+    this.reverseButton.setAttribute("aria-label", top ? "Timeline: newest at the top — click to reverse" : "Timeline: oldest at the top — click to reverse");
+    this.reverseButton.toggleClass("is-inactive", !this.settings.timelineLayout);
+  }
+
+  /** fork: flip the timeline — newest at the top ↔ oldest at the top */
+  public async toggleNewestTop() {
+    this.settings.timelineNewestTop = !this.settings.timelineNewestTop;
+    await this.plugin.saveSettings();
+    this.refreshReverseButton();
+    if (this.isSettingsPanelOpen()) this.renderSettingsPanel();
+    if (this.settings.timelineLayout) await this.updateData({ useCache: true, reheat: true });
+  }
 
   private refreshFlatButton() {
     if (!this.flatButton) return;
@@ -837,6 +863,7 @@ export class Graph3DView extends ItemView {
     this.settings.storyline = next === "storyline";
     await this.plugin.saveSettings();
     this.refreshPresentationButton();
+    this.refreshReverseButton();
     if (this.isSettingsPanelOpen()) this.renderSettingsPanel();
     await this.updateData({ useCache: true, reheat: true });
     window.setTimeout(() => this.graph?.zoomToFit(800), 1500);
@@ -847,6 +874,7 @@ export class Graph3DView extends ItemView {
     const redraw = async () => {
       await this.plugin.saveSettings();
       this.refreshPresentationButton();
+      this.refreshReverseButton();
       this.updateData({ useCache: true, reheat: true });
     };
     new Setting(container)

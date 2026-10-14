@@ -171,3 +171,8 @@
 .graph-3d-counter.is-visible {
 	display: block;
 }
+
+/* fork: reverse-timeline button is faint while the timeline layout is off */
+.graph-3d-reverse-toggle.is-inactive {
+  opacity: 0.4;
+}
