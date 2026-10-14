@@ -113,12 +113,21 @@ export default class Graph3DPlugin extends Plugin {
 	 * - folder → everything under it (path filter)
 	 * - note or hub with a `projekt: "#X"` frontmatter → its project (tag X),
 	 *   the note highlighted — the same scope a hub's own aggregator uses
-	 * - note under 03_PROJEKTPLANERING/<CTX>/<PROJ>/ without `projekt` → that
-	 *   project folder, highlighted
+	 * - note under 03_PROJEKTPLANERING/<CTX>/<PROJ>/ without `projekt`, or that
+	 *   project folder itself → the folder plus tag PROJ (notes elsewhere that
+	 *   carry `#PROJ` or `projekt: "#PROJ"`), the note highlighted
 	 * - any other note → the note and its linked neighbours, highlighted
 	 */
 	scopeFor(file: TAbstractFile): { filters: Filter[]; neighbors: boolean; focusId: string | null } {
+		// a project folder's notes plus every note tagged with (or naming, via
+		// `projekt`) the project elsewhere — e.g. clippings; filters are OR-ed
+		const projectScope = (folder: string, project: string): Filter[] => [
+			{ type: "path", value: folder, enabled: true },
+			{ type: "tag", value: project.normalize("NFC"), enabled: true },
+		];
 		if (file instanceof TFolder) {
+			const pm = /^03_PROJEKTPLANERING\/[^/]+\/([^/]+)$/.exec(file.path);
+			if (pm) return { filters: projectScope(`${file.path}/`, pm[1]), neighbors: false, focusId: null };
 			return { filters: [{ type: "path", value: `${file.path}/`, enabled: true }], neighbors: false, focusId: null };
 		}
 		const fm = this.app.metadataCache.getFileCache(file as TFile)?.frontmatter;
@@ -126,8 +135,8 @@ export default class Graph3DPlugin extends Plugin {
 		if (projekt) {
 			return { filters: [{ type: "tag", value: projekt, enabled: true }], neighbors: false, focusId: file.path };
 		}
-		const m = /^(03_PROJEKTPLANERING\/[^/]+\/[^/]+\/)/.exec(file.path);
-		if (m) return { filters: [{ type: "path", value: m[1], enabled: true }], neighbors: false, focusId: file.path };
+		const m = /^(03_PROJEKTPLANERING\/[^/]+\/([^/]+)\/)/.exec(file.path);
+		if (m) return { filters: projectScope(m[1], m[2]), neighbors: false, focusId: file.path };
 		return { filters: [{ type: "path", value: file.path, enabled: true }], neighbors: true, focusId: file.path };
 	}
 

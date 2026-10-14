@@ -230,6 +230,7 @@ export class InstancedLabelRenderer {
   private labelColor = new Float32Array(0); // rgb + tint weight
   private labelHighlight = new Float32Array(0);
   private labelTrans = new Float32Array(0);
+  private labelBoxCache = new Float32Array(0);
   private labelOpacity = new Float32Array(0);
   private labelDistSq = new Float32Array(0);
   private slotLabel = new Int32Array(0); // slot → label
@@ -751,6 +752,21 @@ export class InstancedLabelRenderer {
     order.sort((a, b) => (hl[a] - hl[b]) || (dist[b] - dist[a]) || (a - b));
     this.visibleCount = count;
     this.writeSlots();
+  }
+
+  /** fork: label boxes for the layout's separation pass — per label (= node
+   *  index) [width, height, centre height above its node], world units */
+  public labelBoxes(): Float32Array {
+    const n = this.labelCount;
+    if (this.labelBoxCache.length !== n * 3) this.labelBoxCache = new Float32Array(n * 3);
+    const b = this.labelBoxCache;
+    for (let i = 0; i < n; i++) {
+      const label = this.labels[i];
+      b[i * 3] = this.labelScale[i * 2];
+      b[i * 3 + 1] = this.labelScale[i * 2 + 1];
+      b[i * 3 + 2] = label.size * 0.6 + 2.0 + (label.lift || 0); // as in updateVisibilityAndOcclusion
+    }
+    return b;
   }
 
   public clear(): void {

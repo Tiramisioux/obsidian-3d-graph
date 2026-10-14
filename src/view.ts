@@ -55,6 +55,26 @@ interface PreprocessedGroup {
   nameRegex?: RegExp;
 }
 
+/** fork: the project tags a note names in frontmatter — `projekt` and
+ *  `delprojekt`, string or list, leading `#` stripped ("#STOPP" → "STOPP") */
+function projectTagsOf(fm: Record<string, unknown> | undefined): string[] {
+  if (!fm) return [];
+  const out: string[] = [];
+  for (const key of Object.keys(fm)) {
+    const k = key.toLowerCase();
+    if (k !== "projekt" && k !== "delprojekt") continue;
+    const raw = fm[key];
+    for (const v of Array.isArray(raw) ? raw : [raw]) {
+      const t = String(v ?? "").trim().replace(/^#/, "");
+      if (t && !/\s/.test(t)) out.push(t);
+    }
+  }
+  return out;
+}
+
+/** fork: hex colour as written in a palette note's frontmatter */
+const PALETTE_HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+
 export class Graph3DView extends ItemView {
   private graph: any;
   private plugin: Graph3DPlugin;
@@ -119,6 +139,8 @@ export class Graph3DView extends ItemView {
   private lastHighlightedNodes = new Set<string>();
   private preprocessedGroups: PreprocessedGroup[] = [];
   private groupsDirty = true;
+  /** fork: notes that `palette:` groups read their colours from */
+  private paletteSources = new Set<string>();
 
   private keyboardDirection = new THREE.Vector3();
   private keyboardRight = new THREE.Vector3();
@@ -253,6 +275,16 @@ export class Graph3DView extends ItemView {
     this.registerDomEvent(this.graphContainer, "blur", () => this.pressedKeys.clear());
     this.registerDomEvent(window, "blur", () => this.pressedKeys.clear());
 
+    // fork: a `palette:` group follows its note — edit a colour there and
+    // the graph recolours (metadata "changed" fires once the cache is updated)
+    this.registerEvent(
+      this.app.metadataCache.on("changed", (file) => {
+        if (!this.paletteSources.has(file.path)) return;
+        this.groupsDirty = true;
+        if (this.isGraphInitialized) this.updateColors();
+      }),
+    );
+
     this.registerEvent(
       this.app.workspace.on("css-change", () => {
         this.colorCache.clear();
@@ -279,7 +311,8 @@ export class Graph3DView extends ItemView {
       }
     });
 
-    // fork: the on/off options live in the switch panel (top left) instead
+    // fork: the on/off options live in the switch panel (top right, under
+    // these buttons) instead
     // of toolbar buttons
     this.buildSwitchPanel();
 
@@ -825,7 +858,8 @@ export class Graph3DView extends ItemView {
   private applyTimeline(positions: Float32Array) {
     const timeline = this.settings.timelineLayout && this.timelineTargets.length * 4 <= positions.length;
     const flat = this.settings.flat2D;
-    if (!timeline && !flat) return;
+    const separated = this.separateLabels(positions); // fork: keep labels apart
+    if (!timeline && !flat && !separated) return;
     if (timeline) {
       const k = this.settings.timelineStrength;
       for (let i = 0; i < this.timelineTargets.length; i++) {
@@ -842,6 +876,55 @@ export class Graph3DView extends ItemView {
       this.timelineSyncBuffer.set(positions);
       this.physicsBridge.setPositions(this.timelineSyncBuffer);
     }
+  }
+
+  private separationOrder: number[] = [];
+  private separationY = new Float32Array(0);
+
+  /** fork: keep labels apart. Notes whose label boxes overlap in the x–y
+   *  plane — the plane the timeline and 2D mode are read in — are pushed
+   *  apart sideways, half each, by `labelSeparation` of the overlap per tick.
+   *  Sideways only, so a note keeps its date. A sweep over the labels sorted
+   *  by height compares only neighbours within the tallest label's reach.
+   *  Independent of the camera, so the layout doesn't shift as you look
+   *  around. Returns whether anything moved. */
+  private separateLabels(positions: Float32Array): boolean {
+    const k = this.settings.labelSeparation;
+    const lr = this.labelRenderer;
+    if (!(k > 0) || !lr || !this.settings.showNodeLabels || this.settings.showLabelsOnHoverOnly) return false;
+    const box = lr.labelBoxes();
+    const n = Math.min(box.length / 3, positions.length / 4);
+    if (n < 2) return false;
+    if (this.separationY.length !== n) this.separationY = new Float32Array(n);
+    const cy = this.separationY, order = this.separationOrder;
+    order.length = n;
+    let maxH = 0;
+    for (let i = 0; i < n; i++) {
+      cy[i] = positions[i * 4 + 1] + box[i * 3 + 2];
+      if (box[i * 3 + 1] > maxH) maxH = box[i * 3 + 1];
+      order[i] = i;
+    }
+    order.sort((a, b) => cy[a] - cy[b]);
+    const PAD = 1.5; // world units of air between two cards
+    let moved = false;
+    for (let a = 0; a < n; a++) {
+      const i = order[a];
+      for (let b = a + 1; b < n; b++) {
+        const j = order[b];
+        const dy = cy[j] - cy[i];
+        if (dy >= maxH + PAD) break;
+        if (dy >= (box[i * 3 + 1] + box[j * 3 + 1]) / 2 + PAD) continue;
+        const dx = positions[j * 4] - positions[i * 4];
+        const overlap = (box[i * 3] + box[j * 3]) / 2 + PAD - Math.abs(dx);
+        if (overlap <= 0) continue;
+        const dir = dx > 0 ? 1 : dx < 0 ? -1 : i < j ? 1 : -1;
+        const push = overlap * k * 0.5;
+        positions[j * 4] += dir * push;
+        positions[i * 4] -= dir * push;
+        moved = true;
+      }
+    }
+    return moved;
   }
 
   private updateStoryline(positions: Float32Array) {
@@ -1200,6 +1283,17 @@ export class Graph3DView extends ItemView {
         await this.plugin.saveSettings();
         this.updateDisplay();
       }),
+    );
+
+    new Setting(container).setName("Keep labels apart").addSlider((s) =>
+      s
+        .setLimits(0, 1, 0.05)
+        .setValue(this.settings.labelSeparation)
+        .setDynamicTooltip()
+        .onChange(async (v) => {
+          this.settings.labelSeparation = v;
+          await this.plugin.saveSettings(); // wakes the layout
+        }),
     );
 
     new Setting(container).setName("Label distance").addSlider((s) =>
@@ -2002,11 +2096,44 @@ export class Graph3DView extends ItemView {
     this.groupsDirty = true;
   }
 
+  /** fork: `palette: key=path/to/note.md` — one prop group per
+   *  `value: "#hex"` line of that note's frontmatter, in the note's order.
+   *  Entries that aren't hex colours (numbers, settings) are skipped. */
+  private paletteGroups(body: string): PreprocessedGroup[] {
+    const eq = body.indexOf("=");
+    if (eq < 0) return [];
+    const propKey = body.slice(0, eq).trim().toLowerCase();
+    const ref = body.slice(eq + 1).trim();
+    if (!propKey || !ref) return [];
+    const file =
+      this.app.vault.getAbstractFileByPath(ref) ??
+      this.app.vault.getAbstractFileByPath(`${ref}.md`) ??
+      this.app.metadataCache.getFirstLinkpathDest(ref, "");
+    this.paletteSources.add(file instanceof TFile ? file.path : ref);
+    if (!(file instanceof TFile)) return [];
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+    const groups: PreprocessedGroup[] = [];
+    for (const [value, color] of Object.entries(fm)) {
+      if (typeof color !== "string" || !PALETTE_HEX.test(color.trim())) continue;
+      groups.push({
+        color: color.trim(),
+        query: `prop:${propKey}=${value.toLowerCase()}`,
+        type: "prop",
+        propKey,
+        propValues: [value.trim().toLowerCase()],
+      });
+    }
+    return groups;
+  }
+
   private updatePreprocessedGroups() {
     if (!this.groupsDirty) return;
-    this.preprocessedGroups = this.settings.groups
-      .map((group) => {
+    this.paletteSources.clear();
+    const expanded = this.settings.groups
+      .map((group): PreprocessedGroup | PreprocessedGroup[] => {
         const query = group.query.toLowerCase();
+        // fork: colours from a note — "palette: källa=_views/kortfärger.md"
+        if (query.startsWith("palette:")) return this.paletteGroups(group.query.substring(8).trim());
         if (!query) {
           return {
             color: group.color,
@@ -2071,8 +2198,9 @@ export class Graph3DView extends ItemView {
             type: "text" as const,
           };
         }
-      })
-      .filter((g) => g.query !== "");
+      });
+    // fork: a palette group expands in place (no flatMap — the lib target is es2018)
+    this.preprocessedGroups = ([] as PreprocessedGroup[]).concat(...expanded).filter((g) => g.query !== "");
     this.groupsDirty = false;
   }
 
@@ -2618,6 +2746,12 @@ export class Graph3DView extends ItemView {
             const tags = cache
               ? (getAllTags(cache) || []).map((t) => (t.startsWith("#") ? t.substring(1) : t))
               : [];
+            // fork: `projekt: "#X"` / `delprojekt: "#X/sub"` count as tags, as on
+            // the vault's hubs — so a project scope (tag filter) finds notes that
+            // name their project only in frontmatter (e.g. assigned clippings)
+            for (const t of projectTagsOf(cache?.frontmatter)) {
+              if (!tags.some((x) => x.toLowerCase() === t.toLowerCase())) tags.push(t);
+            }
             const type = file.extension === "md" ? NodeType.File : NodeType.Attachment;
 
             if (type === NodeType.File && needsContent) {

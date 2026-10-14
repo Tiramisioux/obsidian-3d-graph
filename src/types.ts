@@ -62,6 +62,9 @@ export interface Graph3DPluginSettings {
   labelTintOpacity: number;
   /** fork: the same tint while the node/label is hovered (0–1) */
   labelTintHoverOpacity: number;
+  /** fork: push notes apart sideways while their labels overlap (share of
+   *  the overlap per tick, 0 = off) */
+  labelSeparation: number;
   /** fork: Obsidian page preview when hovering a note node */
   hoverPreview: boolean;
   /** fork: pull notes along the vertical axis by date */
@@ -144,6 +147,7 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   labelBorderOpacity: 0.18,
   labelTintOpacity: 0.15,
   labelTintHoverOpacity: 0.45,
+  labelSeparation: 1,
   hoverPreview: true,
   timelineLayout: false,
   timelineStrength: 0.08,

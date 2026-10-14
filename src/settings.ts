@@ -192,7 +192,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl).setName("Color Groups").setHeading();
     containerEl.createEl("p", {
-      text: 'Color nodes with custom rules; the first matching group wins. Use "path:", "tag:", "file:", "prop:", "name:", or text match. Examples: path:folder, tag:#project, file:MyNote.md, file:*.pdf, prop:typ=hub, prop:källa=email|mail, prop:status (key set at all), name:. (every note — put it last as a catch-all)',
+      text: 'Color nodes with custom rules; the first matching group wins. Use "path:", "tag:", "file:", "prop:", "palette:", "name:", or text match. Examples: path:folder, tag:#project, file:MyNote.md, file:*.pdf, prop:typ=hub, prop:källa=email|mail, prop:status (key set at all), palette:källa=_views/kortfärger.md (colours from that note\'s frontmatter, value: "#hex" per line — follows edits live; the group\'s own colour is ignored), name:. (every note — put it last as a catch-all)',
       cls: "setting-item-description",
     });
 
@@ -491,6 +491,19 @@ export class Graph3DSettingsTab extends PluginSettingTab {
             this.plugin.settings.labelWrapChars = v;
             await this.plugin.saveSettings();
             this.triggerUpdate({ redrawData: true, useCache: true });
+          }),
+      );
+    new Setting(containerEl)
+      .setName("Keep labels apart")
+      .setDesc("Notes whose labels overlap are pushed apart sideways (they keep their date on the timeline). How hard: 0 = off, 1 = fully apart each step. Default 1.")
+      .addSlider((s) =>
+        s
+          .setLimits(0, 1, 0.05)
+          .setValue(this.plugin.settings.labelSeparation)
+          .setDynamicTooltip()
+          .onChange(async (v) => {
+            this.plugin.settings.labelSeparation = v;
+            await this.plugin.saveSettings(); // wakes the layout
           }),
       );
     new Setting(containerEl).setName("Underscores as spaces in labels").addToggle((toggle) =>

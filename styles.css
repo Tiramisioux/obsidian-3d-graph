@@ -34,7 +34,7 @@
 	position: absolute;
 	top: 10px;
 	right: 10px;
-	z-index: 10;
+	z-index: 11; /* fork: the settings panel opens over the switch panel */
 	display: flex;
 	gap: 8px;
 }
@@ -174,13 +174,14 @@
 
 /* fork: in-view switch panel (src/ui/flip-switch.ts) — top left, collapsible.
    Flip switches are Obsidian's own .checkbox-container toggles. */
+/* fork: right side, under the reset / settings buttons (user, 2026-10-14) */
 .graph-3d-switch-panel {
 	position: absolute;
-	top: 10px;
-	left: 10px;
+	top: 56px;
+	right: 10px;
 	z-index: 10;
 	width: 216px;
-	max-height: calc(100% - 60px);
+	max-height: calc(100% - 106px);
 	overflow-y: auto;
 	box-sizing: border-box;
 	background-color: var(--background-secondary);

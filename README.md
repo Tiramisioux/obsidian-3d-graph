@@ -14,6 +14,7 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 | 🏷 | **Label cards that don't blur together** | Each label is a rounded card with a faint outline (*Settings → Label border opacity*), and a nearer label covers a farther one instead of the texts mixing. Set *Label Background Opacity* to 1 for fully opaque cards. The label settings (size, colours, opacity) now apply immediately instead of after a reload. |
 | 🎨 | **Labels in their note's colour** | Each label's card is faintly tinted with its node's colour — the same colour the node gets from colour groups, note types, meetings or the focus highlight — and its outline takes that colour too. Hovering makes the tint clearly stronger. White nodes keep a plain card. The text stays dark on light cards (light on dark ones), whatever the tint. Strengths: *Settings → Label tint* (0.15) and *Label tint on hover* (0.45). |
 | 📏 | **Room for the labels** | New default spacing so neighbouring labels overlap far less: neighbours sit about one label width (~45 units, a 22-character line) apart instead of ~24. *Center force* 0.1 → 0.02, *Repel force* 10 → 20 (slider now up to 40), new *Link distance* 50 (the engine used a fixed 30), *Label distance* 150 → 300 so labels still show in the bigger layout. Existing vaults keep their stored values — set them under *Settings → Forces*. |
+| ↔️ | **Labels kept apart** | Spacing alone can't separate labels on the timeline: every note's height is fixed by its date, so notes from the same week share a band. While two labels overlap, their notes are now pushed apart **sideways** (half each), never up or down — the date stays put. Works the same from any viewing angle (it compares the label cards as seen from the front). *Settings → Keep labels apart* (1; 0 = off). On a 49-note project in timeline mode: overlapping label area 32 % → 3 %. |
 | 🐞 | **No more flicker** | Fixed: overlapping labels flickered (cards nearly at the same depth — always in 2D mode — won and lost against each other frame by frame); labels are now drawn far → near instead. Labels could also blink off while turning the view, because the view read the physics worker's buffer after handing it back. And the layout never came to rest with the timeline or 2D mode on: it now stops computing once nothing moves, and wakes up on drag, settings or data changes. |
 | ↩️ | **Labels on several lines** | Long labels wrap at word boundaries — about 22 characters per line, up to 3 lines (*Settings → Label line width*; 0 = one line, cut at 40 characters). |
 | 🖱 | **Clickable labels** | Labels act like their node: **hover** a label to light it up (card tinted in the highlight colour, slightly larger) and see the page preview; **click** it to fly to the note; drag it to move the note. |
@@ -25,9 +26,9 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 | ⬜ | **2D mode** | Flattens the graph into a plane facing you — pan and zoom, no rotation. With the timeline it becomes a flat time chart, the time grid seen as labelled lines. The *2D mode* switch, **⌥⌘P**, or graph ⚙ → *Timeline → 2D mode*. |
 | ✋ | **Pan the view** | **Space + drag**, or **two-finger drag** on a trackpad (pinch still zooms; a mouse wheel keeps zooming). In 2D mode a plain drag on empty space pans too. Right-drag pans as before. Turn off trackpad panning under graph ⚙ → *Two-finger drag pans*. |
 | ⌨️ | **Shortcuts keep working in the graph** | Fixed: with keyboard camera controls on, ⌘Q, ⌘W, ⌘S, ⌘E … did nothing while the graph had focus (the Q/W/S/E/A/D movement keys swallowed them) and the camera could keep drifting afterwards. |
-| 🎚 | **Switch panel** | Top left in the graph: the view's on/off options as flip switches (Obsidian's own toggle look) — **Presentation** (*Network / Timeline / Story*), **2D mode**, **Timeline layout**, **Newest at the top**, **Storyline**, **Time grid** + *Week / Month / Auto*, **Grid hover**, **Labels**, **Events**, **Page preview**, **Trackpad pan**. A switch always shows the live state — a hotkey or the settings flip it visibly — and its tooltip shows the hotkey. Click *Display* to fold the panel away (remembered). Replaces the presentation, reverse and 2D toolbar buttons. |
+| 🎚 | **Switch panel** | Top right in the graph, under the reset and ⚙ buttons: the view's on/off options as flip switches (Obsidian's own toggle look) — **Presentation** (*Network / Timeline / Story*), **2D mode**, **Timeline layout**, **Newest at the top**, **Storyline**, **Time grid** + *Week / Month / Auto*, **Grid hover**, **Labels**, **Events**, **Page preview**, **Trackpad pan**. A switch always shows the live state — a hotkey or the settings flip it visibly — and its tooltip shows the hotkey. Click *Display* to fold the panel away (remembered). Replaces the presentation, reverse and 2D toolbar buttons. |
 | 🔀 | **Presentation switch** | *Presentation* in the switch panel, or **⌥⌘G** (command *Next presentation*), steps through **Network → Timeline → Timeline + storyline**. |
-| 🎨 | **Colour by note type** | Two new colour-group rules (*Settings → Color Groups*): **`prop: key=value`** matches a frontmatter property (`prop: typ=hub`, several values with `\|`: `prop: källa=email\|mail`, or just `prop: status` for "has the property"), and **`name: <regex>`** matches the node's name — `name: .` is a catch-all for "every other note". The first group that matches wins, so put the catch-all last. See the example below. |
+| 🎨 | **Colour by note type** | Two new colour-group rules (*Settings → Color Groups*): **`prop: key=value`** matches a frontmatter property (`prop: typ=hub`, several values with `\|`: `prop: källa=email\|mail`, or just `prop: status` for "has the property"), **`name: <regex>`** matches the node's name — `name: .` is a catch-all for "every other note" — and **`palette: key=path/to/note.md`** takes the colours from a note: every `value: "#hex"` line in that note's frontmatter colours the notes whose property `key` has that value (`palette: källa=_views/kortfärger.md`). Change a colour in the note and the graph follows at once; lines that aren't hex colours are skipped, and the group's own colour is ignored. The first group that matches wins, so put the catch-all last. See the example below. |
 | 📅 | **Meetings as events** | A todo with the meeting tag (default `#röd`) and a due date — `- [ ] möte med Anna #röd [due:: 2026-10-20 10:00]` — becomes a **node of its own**, linked to its note, labelled *20 okt möte med Anna* and placed at **its own date** on the timeline and storyline. Hover it for the note's preview, double-click to open the note. If you keep a meeting note (`typ: möte`, named with the meeting's timestamp and the same text), the note stands in for the todo and no extra node is drawn. *Settings → Meetings*: on/off, tag, colour (red). |
 | 🎯 | **Open a folder, hub or note in the graph** | Right-click a folder or note in the file list → **Open in 3D graph**, or press **⌘⇧G** for the note you're in. A folder shows everything inside it; a note or hub shows its **project** with the note **highlighted** (larger, highlight colour) and the camera on it — so you see where it sits in the structure. |
 
@@ -47,12 +48,14 @@ Defaults set by the fork; change them under *Settings → Hotkeys* (search "3D g
 
 | You pick | The graph shows | Highlighted |
 |---|---|---|
-| a folder | everything under that folder | — (zooms to fit) |
+| a folder | everything under that folder — for a project folder (`…/<context>/<project>`) also the notes elsewhere that belong to the project (below) | — (zooms to fit) |
 | a note or hub with a `projekt: "#X"` property | everything tagged `#X` — the project | that note |
-| a note in a project folder (`…/<context>/<project>/…`) without `projekt` | that project folder | that note |
+| a note in a project folder (`…/<context>/<project>/…`) without `projekt` | that project folder + the notes elsewhere that belong to the project | that note |
 | any other note | the note and the notes it links to / from | that note |
 
 It replaces the graph's current filter; set a filter yourself any time to change it.
+
+**A note belongs to project `X`** when it carries the tag `#X` **or** names it in its properties: `projekt: "#X"` or `delprojekt: "#X/sub"` (text or list) count as the tags `X` and `X/sub` — for a tag filter, a tag colour group and the tag nodes alike. So a web clipping assigned to a project only through its properties shows up in that project's graph.
 
 ### Example: Zettelkasten file names
 
@@ -71,10 +74,19 @@ Groups as in the author's vault (first match wins):
 |---|---|---|
 | `prop: typ=hub` | graphite | project hubs |
 | `prop: typ=person` | blue | person notes |
-| `prop: källa=email\|mail` | yellow | imported emails |
 | `prop: typ=möte` | red | meeting notes |
-| `prop: källa=clipping` · `tag: clippings` | grey | web clippings |
+| `palette: källa=_views/kortfärger.md` | from the note | every note by its `källa` — the same colours the vault's project hubs tint their document cards with (*email*, *digital anteckning*, *clipping* …) |
 | `name: .` | white | every other note |
+
+The palette note's frontmatter is just `källa value: "#hex"` pairs:
+
+```yaml
+---
+digital anteckning: "#e2c94c"
+email: "#2b79dc"
+clipping: "#d6d8db"
+---
+```
 
 Meeting todos (`#röd` + a date) are red through *Settings → Meetings → Meeting color*, not through a group.
 
@@ -98,6 +110,7 @@ Tags have no date and aren't pulled; attachments are pulled but not part of the 
 | Label line width (characters) | Settings → Labels | 22 |
 | Label border opacity | Settings → Labels | 0.18 |
 | Label tint · Label tint on hover | Settings → Labels | 0.15 · 0.45 |
+| Keep labels apart | Settings → Labels, graph ⚙ → *Labels* | 1 |
 | Link distance | Settings → Forces, graph ⚙ → *Forces* | 50 |
 | Hover time-grid frames | graph ⚙ → *Timeline*, switch panel | on |
 | Switch panel folded | the panel's *Display* header | off (open) |
