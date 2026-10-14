@@ -24,6 +24,18 @@ export default class Graph3DPlugin extends Plugin {
 		);
 
 		this.addCommand({
+			id: "toggle-2d",
+			name: "Toggle 2D mode",
+			callback: () => {
+				this.app.workspace
+					.getLeavesOfType(VIEW_TYPE_3D_GRAPH)
+					.forEach((leaf) => {
+						if (leaf.view instanceof Graph3DView) leaf.view.toggleFlat2D();
+					});
+			},
+		});
+
+		this.addCommand({
 			id: "cycle-presentation",
 			name: "Next presentation (network → timeline → storyline)",
 			hotkeys: [{ modifiers: ["Mod", "Alt"], key: "G" }],

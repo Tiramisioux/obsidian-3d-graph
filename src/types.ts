@@ -54,6 +54,8 @@ export interface Graph3DPluginSettings {
   labelStripPattern: string;
   /** fork: show underscores in labels as spaces */
   labelUnderscoresToSpaces: boolean;
+  /** fork: wrap labels at about this many characters per line (0 = one line) */
+  labelWrapChars: number;
   /** fork: Obsidian page preview when hovering a note node */
   hoverPreview: boolean;
   /** fork: pull notes along the vertical axis by date */
@@ -66,6 +68,10 @@ export interface Graph3DPluginSettings {
   timelineNewestTop: boolean;
   /** fork: draw a line through the notes in date order */
   storyline: boolean;
+  /** fork: week/month frames behind the timeline */
+  timelineGrid: "off" | "week" | "month" | "auto";
+  /** fork: flatten the graph into a plane facing the camera, rotation locked */
+  flat2D: boolean;
   useKeyboardControls: boolean;
   keyboardMoveSpeed: number;
   zoomOnClick: boolean;
@@ -114,12 +120,15 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   labelOcclusion: false,
   labelStripPattern: "",
   labelUnderscoresToSpaces: false,
+  labelWrapChars: 22,
   hoverPreview: true,
   timelineLayout: false,
   timelineStrength: 0.08,
   timelineLength: 600,
   timelineNewestTop: false,
   storyline: false,
+  timelineGrid: "off",
+  flat2D: false,
   useKeyboardControls: true,
   keyboardMoveSpeed: 2.0,
   zoomOnClick: true,

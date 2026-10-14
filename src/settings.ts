@@ -449,6 +449,20 @@ export class Graph3DSettingsTab extends PluginSettingTab {
             this.triggerUpdate({ redrawData: true, useCache: true });
           }),
       );
+    new Setting(containerEl)
+      .setName("Label line width (characters)")
+      .setDesc("Long labels wrap at word boundaries onto up to 3 lines. 0 = one line, cut at 40 characters.")
+      .addSlider((s) =>
+        s
+          .setLimits(0, 60, 2)
+          .setValue(this.plugin.settings.labelWrapChars)
+          .setDynamicTooltip()
+          .onChange(async (v) => {
+            this.plugin.settings.labelWrapChars = v;
+            await this.plugin.saveSettings();
+            this.triggerUpdate({ redrawData: true, useCache: true });
+          }),
+      );
     new Setting(containerEl).setName("Underscores as spaces in labels").addToggle((toggle) =>
       toggle.setValue(this.plugin.settings.labelUnderscoresToSpaces).onChange(async (value) => {
         this.plugin.settings.labelUnderscoresToSpaces = value;

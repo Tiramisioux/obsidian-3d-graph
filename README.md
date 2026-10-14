@@ -2,7 +2,7 @@
 
 A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Aryan Gupta, with fixes and extra ways to present your vault. Everything from the original works the same; this fork adds what's listed below.
 
-> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.3 · **based on:** 2.8.1
+> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.4 · **based on:** 2.8.1
 > It has its own id on purpose: a community-store update of the original can never overwrite it.
 
 ## What this fork adds
@@ -11,9 +11,12 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 |---|---|---|
 | 🐞 | **Labels that actually show** | Fixed: with a filter or a small graph, node labels were invisible, and in large graphs they could show the wrong names. Nothing to set. ([reported upstream: #16](https://github.com/Apoo711/obsidian-3d-graph/issues/16)) |
 | ✂️ | **Shorter labels** | *Settings → Strip from label (regex)* removes a pattern from note labels, e.g. a Zettelkasten timestamp; *Underscores as spaces* tidies the rest. Search still matches the full file name; tag labels are left alone. |
+| ↩️ | **Labels on several lines** | Long labels wrap at word boundaries — about 22 characters per line, up to 3 lines (*Settings → Label line width*; 0 = one line, cut at 40 characters). |
 | 👁 | **Page preview on hover** | Hover a note node to see Obsidian's page preview. Needs the core *Page preview* plugin. Turn it off under *Settings → Page preview on hover*, or require a modifier key under *Settings → Page preview → 3D Graph*. |
 | 🕰 | **Timeline layout** | Notes are pulled **vertically by date** — oldest at the top, newest at the bottom (or the other way with *Newest at the top*). Links still cluster related notes, so it's a rough timeline, not a ruler. |
 | 🧵 | **Storyline** | A thin line threads through the notes in date order, so you can follow the story from first note to last. |
+| 🗓 | **Time grid** | In timeline view: faint frames at each **week** (labelled *v. 42*) or **month** (*okt. 2026*) — graph ⚙ → *Timeline → Time grid* (Off / Weeks / Months / Auto). The frames follow where the notes actually are; seen from above they stack like floors. |
+| ⬜ | **2D mode** | Flattens the graph into a plane facing you — pan and zoom, no rotation. With the timeline it becomes a flat time chart, the time grid seen as labelled lines. Toolbar button (square/box icon), graph ⚙ → *Timeline → 2D mode*, or the command *Toggle 2D mode*. |
 | 🔀 | **Presentation switch** | A button in the graph's top-right toolbar (or **⌥⌘G**, command *Next presentation*) steps through **Network → Timeline → Timeline + storyline**. |
 | 🎯 | **Open a folder, hub or note in the graph** | Right-click a folder or note in the file list → **Open in 3D graph**, or press **⌘⇧G** for the note you're in. A folder shows everything inside it; a note or hub shows its **project** with the note **highlighted** (larger, highlight colour) and the camera on it — so you see where it sits in the structure. |
 
@@ -61,7 +64,9 @@ Tags have no date and aren't pulled; attachments are pulled but not part of the 
 | Strip from label (regex) | Settings → Labels | *(empty)* |
 | Underscores as spaces in labels | Settings → Labels | off |
 | Page preview on hover | Settings → Interaction | on |
+| Label line width (characters) | Settings → Labels | 22 |
 | Timeline layout · Newest at the top · Timeline strength · Timeline length · Storyline | graph view ⚙ → *Timeline* | off · off · 0.08 · 600 · off |
+| 2D mode · Time grid | graph view ⚙ → *Timeline* | off · Off |
 
 ## Install
 
@@ -86,7 +91,7 @@ npx tsc -noEmit -skipLibCheck && node esbuild.config.mjs production
 
 The Rust/WASM physics engine is prebuilt in `src/physics/wasm-data.ts`; `wasm-pack` (`npm run build`) is only needed when changing `crates/`.
 
-Fork changes, by file: label fix + label formatting in `src/rendering/label-renderer.ts`; page preview, timeline, storyline, presentation switch and the focus highlight (`showScope`, `flyToNode`) in `src/view.ts`; new settings in `src/types.ts` / `src/settings.ts`; hover source, commands, hotkeys, the file-menu item and the folder/hub/note scope (`scopeFor`) in `main.ts`. Live-testing helpers for developers: `scripts/dev/`.
+Fork changes, by file: label fix, label formatting and line wrapping (`labelLines`) in `src/rendering/label-renderer.ts`; page preview, timeline, storyline, time grid (`buildTimelineGrid`, `updateTimelineGrid`), 2D mode (`toggleFlat2D`), presentation switch and the focus highlight (`showScope`, `flyToNode`) in `src/view.ts`; new settings in `src/types.ts` / `src/settings.ts`; hover source, commands, hotkeys, the file-menu item and the folder/hub/note scope (`scopeFor`) in `main.ts`. Live-testing helpers for developers: `scripts/dev/`.
 
 ---
 

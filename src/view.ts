@@ -9,6 +9,7 @@ import {
   type WorkspaceLeaf,
 } from "obsidian";
 import * as THREE from "three";
+import SpriteText from "three-spritetext";
 import type Graph3DPlugin from "../main";
 import { PhysicsBridge } from "./physics/physics-bridge";
 import { createWorkerBlobUrl, getWasmArrayBuffer } from "./physics/wasm-loader";
@@ -119,7 +120,10 @@ export class Graph3DView extends ItemView {
   private timelineTargets: Float32Array = new Float32Array(0); // target y per node, NaN = undated
   private storylineOrder: number[] = []; // node indices, oldest → newest
   private storylineLine: THREE.Line | null = null;
-  private timelineTick = 0;
+  private timelineGridGroup: THREE.Group | null = null;
+  private timelineGridLines: THREE.LineSegments | null = null;
+  private timelineGridStops: { y: number; sprite: THREE.Object3D }[] = [];
+  private timelineGridTick = 0;
   private timelineSyncBuffer: Float32Array = new Float32Array(0);
 
   private frustum = new THREE.Frustum();
@@ -255,6 +259,13 @@ export class Graph3DView extends ItemView {
     });
     this.refreshPresentationButton();
     this.presentationButton.addEventListener("click", () => this.cyclePresentation());
+
+    // fork: 2D / 3D switch
+    this.flatButton = controlsContainer.createEl("div", {
+      cls: "graph-3d-reset-toggle graph-3d-flat-toggle",
+    });
+    this.refreshFlatButton();
+    this.flatButton.addEventListener("click", () => this.toggleFlat2D());
 
     this.settingsToggleButton = controlsContainer.createEl("div", {
       cls: "graph-3d-settings-toggle",
@@ -591,19 +602,91 @@ export class Graph3DView extends ItemView {
       this.storylineLine.frustumCulled = false;
       this.graph.scene().add(this.storylineLine);
     }
+    if (this.settings.timelineLayout && this.settings.timelineGrid !== "off") this.buildTimelineGrid(lo, hi);
   }
 
-  /** soft pull of dated nodes towards their height on the time axis; synced
-   *  back into the WASM engine every few ticks (positions only — it keeps
-   *  velocities, the same path node dragging uses) */
-  private applyTimeline(positions: Float32Array) {
-    if (!this.settings.timelineLayout || this.timelineTargets.length * 4 > positions.length) return;
-    const k = this.settings.timelineStrength;
-    for (let i = 0; i < this.timelineTargets.length; i++) {
-      const ty = this.timelineTargets[i];
-      if (!isNaN(ty)) positions[i * 4 + 1] += (ty - positions[i * 4 + 1]) * k;
+  /** faint square frames at each week (Monday) or month start, labelled,
+   *  at the height the timeline maps that date to */
+  private buildTimelineGrid(lo: number, hi: number) {
+    const span = hi - lo || 1, L = this.settings.timelineLength;
+    const sign = this.settings.timelineNewestTop ? 1 : -1;
+    const yOf = (t: number) => sign * ((t - lo) / span - 0.5) * L;
+    const DAY = 86400000;
+    let unit = this.settings.timelineGrid;
+    if (unit === "auto") unit = span <= 120 * DAY ? "week" : "month";
+    const stops: { t: number; label: string }[] = [];
+    if (unit === "week") {
+      const d = new Date(lo); d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // back to Monday
+      for (; d.getTime() <= hi; d.setDate(d.getDate() + 7)) {
+        if (d.getTime() < lo) continue;
+        // ISO week number
+        const th = new Date(d); th.setDate(th.getDate() + 3);
+        const jan4 = new Date(th.getFullYear(), 0, 4);
+        const wk = 1 + Math.round(((th.getTime() - jan4.getTime()) / DAY - 3 + ((jan4.getDay() + 6) % 7)) / 7);
+        stops.push({ t: d.getTime(), label: `v. ${wk}` });
+      }
+    } else {
+      const d = new Date(lo); d.setHours(0, 0, 0, 0); d.setDate(1);
+      if (d.getTime() < lo) d.setMonth(d.getMonth() + 1);
+      for (; d.getTime() <= hi; d.setMonth(d.getMonth() + 1))
+        stops.push({ t: d.getTime(), label: d.toLocaleDateString("sv-SE", { month: "short", year: "numeric" }) });
     }
-    if (++this.timelineTick % 3 === 0 && this.settings.useWasmPhysics) {
+    if (!stops.length) return;
+    // unit squares at the TARGET heights; updateTimelineGrid() fits them to
+    // where the notes actually are (scale/offset in y, size in x/z)
+    const pts: number[] = [];
+    for (const s of stops) {
+      const y = yOf(s.t);
+      const c = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+      for (let i = 0; i < 4; i++) {
+        const [x1, z1] = c[i], [x2, z2] = c[(i + 1) % 4];
+        pts.push(x1, y, z1, x2, y, z2);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    const ink = this.getCssColor("--text-faint", "#999999");
+    const group = new THREE.Group();
+    const lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: new THREE.Color(ink), transparent: true, opacity: 0.35, depthWrite: false }));
+    lines.renderOrder = -1;
+    lines.visible = false; // until the first fit
+    group.add(lines);
+    this.timelineGridLines = lines;
+    this.timelineGridStops = [];
+    for (const s of stops) {
+      const sprite = new SpriteText(s.label, 4, this.getCssColor("--text-muted", "#666666"));
+      (sprite as any).center?.set?.(1, 0.5);
+      sprite.visible = false;
+      group.add(sprite);
+      this.timelineGridStops.push({ y: yOf(s.t), sprite });
+    }
+    this.timelineGridGroup = group;
+    this.graph.scene().add(group);
+  }
+
+  /** soft pull of dated nodes towards their height on the time axis, synced
+   *  back into the WASM engine on EVERY tick (positions only — it keeps
+   *  velocities, the same path node dragging uses). The bridge runs tick
+   *  callbacks before it requests the next STEP, so the worker's next step
+   *  starts from the nudged positions. Syncing only every few ticks made the
+   *  rendered nodes alternate between nudged and un-nudged positions: jitter. */
+  private applyTimeline(positions: Float32Array) {
+    const timeline = this.settings.timelineLayout && this.timelineTargets.length * 4 <= positions.length;
+    const flat = this.settings.flat2D;
+    if (!timeline && !flat) return;
+    if (timeline) {
+      const k = this.settings.timelineStrength;
+      for (let i = 0; i < this.timelineTargets.length; i++) {
+        const ty = this.timelineTargets[i];
+        if (!isNaN(ty)) positions[i * 4 + 1] += (ty - positions[i * 4 + 1]) * k;
+      }
+    }
+    if (flat) {
+      // fork 2D mode: everything into the z = 0 plane (soft, so it settles smoothly)
+      for (let i = 2; i < positions.length; i += 4) positions[i] *= 0.6;
+    }
+    if (this.settings.useWasmPhysics) {
       if (this.timelineSyncBuffer.length !== positions.length) this.timelineSyncBuffer = new Float32Array(positions.length);
       this.timelineSyncBuffer.set(positions);
       this.physicsBridge.setPositions(this.timelineSyncBuffer);
@@ -622,7 +705,45 @@ export class Graph3DView extends ItemView {
     attr.needsUpdate = true;
   }
 
+  /** fit the grid to the notes' actual layout: heights via a least-squares
+   *  line target-y → actual-y over the dated notes (the soft pull never
+   *  reaches its targets), frame size from the notes' x/z spread */
+  private updateTimelineGrid(positions: Float32Array) {
+    if (!this.timelineGridLines || ++this.timelineGridTick % 5 !== 1) return;
+    let n = 0, st = 0, sy = 0, stt = 0, sty = 0;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (let i = 0; i < this.timelineTargets.length; i++) {
+      const t = this.timelineTargets[i];
+      const x = positions[i * 4], y = positions[i * 4 + 1], z = positions[i * 4 + 2];
+      if (x < minX) minX = x; if (x > maxX) maxX = x; if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+      if (isNaN(t)) continue;
+      n++; st += t; sy += y; stt += t * t; sty += t * y;
+    }
+    const varT = stt - (st * st) / Math.max(n, 1);
+    if (n < 2 || varT <= 0) return;
+    const a = (sty - (st * sy) / n) / varT, b = (sy - a * st) / n;
+    const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
+    const half = Math.max(15, Math.max(maxX - minX, maxZ - minZ) / 2 * 1.15);
+    const lines = this.timelineGridLines;
+    lines.scale.set(half, a, half);
+    lines.position.set(cx, b, cz);
+    lines.visible = true;
+    const labelH = Math.max(2.5, half / 18);
+    for (const s of this.timelineGridStops) {
+      s.sprite.position.set(cx - half - 1, a * s.y + b, cz - half);
+      (s.sprite as any).textHeight = labelH;
+      s.sprite.visible = true;
+    }
+  }
+
   private clearStoryline() {
+    this.timelineGridLines = null;
+    this.timelineGridStops = [];
+    if (this.timelineGridGroup) {
+      this.timelineGridGroup.parent?.remove(this.timelineGridGroup);
+      this.timelineGridGroup.traverse((o: any) => { o.geometry?.dispose?.(); o.material?.map?.dispose?.(); o.material?.dispose?.(); });
+      this.timelineGridGroup = null;
+    }
     if (!this.storylineLine) return;
     this.storylineLine.parent?.remove(this.storylineLine);
     this.storylineLine.geometry.dispose();
@@ -667,6 +788,32 @@ export class Graph3DView extends ItemView {
   }
 
   private presentationButton: HTMLElement | null = null;
+  private flatButton: HTMLElement | null = null;
+
+  private refreshFlatButton() {
+    if (!this.flatButton) return;
+    this.flatButton.empty();
+    setIcon(this.flatButton, this.settings.flat2D ? "box" : "square");
+    this.flatButton.setAttribute("aria-label", this.settings.flat2D ? "2D mode on — click for 3D" : "3D — click for 2D mode");
+  }
+
+  /** fork: flatten into a plane facing the camera (rotation locked), or back to 3D */
+  public async toggleFlat2D() {
+    this.settings.flat2D = !this.settings.flat2D;
+    await this.plugin.saveSettings();
+    this.refreshFlatButton();
+    this.updateControls();
+    if (this.isSettingsPanelOpen()) this.renderSettingsPanel();
+    if (this.settings.flat2D && this.graph) {
+      // face the plane straight on, keeping the current distance
+      const cam = this.graph.camera().position;
+      const dist = Math.max(100, Math.hypot(cam.x, cam.y, cam.z));
+      this.graph.cameraPosition({ x: 0, y: 0, z: dist }, { x: 0, y: 0, z: 0 }, 800);
+      this.graph.camera().up.set(0, 1, 0);
+    }
+    this.physicsBridge.start();
+    window.setTimeout(() => this.graph?.zoomToFit(800), 1500);
+  }
 
   private presentationMode(): "network" | "timeline" | "storyline" {
     if (!this.settings.timelineLayout) return "network";
@@ -714,6 +861,19 @@ export class Graph3DView extends ItemView {
     new Setting(container).setName("Timeline length").addSlider((s) =>
       s.setLimits(100, 3000, 50).setValue(this.settings.timelineLength).setDynamicTooltip()
         .onChange(async (v) => { this.settings.timelineLength = v; await redraw(); }));
+    new Setting(container)
+      .setName("2D mode")
+      .setDesc("Flatten the graph into a plane facing you; pan and zoom, no rotation. With the timeline it becomes a flat time chart.")
+      .addToggle((t) => t.setValue(this.settings.flat2D).onChange(async (v) => { if (v !== this.settings.flat2D) await this.toggleFlat2D(); }));
+    new Setting(container)
+      .setName("Time grid")
+      .setDesc("Week or month frames behind the timeline, labelled.")
+      .addDropdown((d) =>
+        d
+          .addOptions({ off: "Off", week: "Weeks", month: "Months", auto: "Auto" })
+          .setValue(this.settings.timelineGrid)
+          .onChange(async (v) => { this.settings.timelineGrid = v as "off" | "week" | "month" | "auto"; await redraw(); }),
+      );
     new Setting(container)
       .setName("Storyline")
       .setDesc("A line through the notes in date order.")
@@ -1284,6 +1444,7 @@ export class Graph3DView extends ItemView {
                 this.applyTimeline(positions);
                 this.currentPositions = positions;
                 this.updateStoryline(positions);
+                this.updateTimelineGrid(positions);
                 this.instancedRenderer?.updatePositions(positions);
                 if (this.settings.showNodeLabels && !this.settings.performanceMode) {
                   this.labelRenderer?.updateVisibilityAndOcclusion(
@@ -1609,6 +1770,7 @@ export class Graph3DView extends ItemView {
     const controls = this.graph.controls();
     if (controls) {
       controls.rotateSpeed = rotateSpeed;
+      controls.noRotate = this.settings.flat2D; // fork: 2D mode — pan + zoom only
       controls.panSpeed = panSpeed;
       controls.zoomSpeed = zoomSpeed;
       if (!this.controlsListenerAdded) {

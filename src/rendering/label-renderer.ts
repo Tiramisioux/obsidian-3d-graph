@@ -7,6 +7,8 @@ export interface LabelItem {
   type: NodeType;
   nodeIndex: number;
   size: number;
+  /** fork: extra lift for multi-line labels */
+  lift?: number;
 }
 
 interface AtlasGlyph {
@@ -17,6 +19,8 @@ interface AtlasGlyph {
   pixelWidth: number;
   pixelHeight: number;
   aspect: number;
+  /** fork: number of text lines in this glyph */
+  lines: number;
 }
 
 const LABEL_VERT = /* glsl */ `
@@ -78,6 +82,36 @@ export function formatLabel(name: string, settings: Graph3DPluginSettings): stri
   if (settings.labelUnderscoresToSpaces) out = out.replace(/_/g, " ");
   out = out.trim();
   return out || name;
+}
+
+/**
+ * fork: a label split into lines of about `labelWrapChars` characters at word
+ * boundaries (max 3 lines, the rest cut with "…"); a word longer than a line
+ * is broken. With wrapping off (0) the old rule: one line, max 40 characters.
+ */
+export function labelLines(name: string, settings: Graph3DPluginSettings, maxLines = 3): string[] {
+  const width = settings.labelWrapChars || 0;
+  if (width <= 0) return [name.length > 40 ? `${name.substring(0, 38)}…` : name];
+  const words = name.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let cur = "";
+  for (let word of words) {
+    while (word.length > width) {                       // break an over-long word
+      if (cur) { lines.push(cur); cur = ""; }
+      lines.push(word.slice(0, width));
+      word = word.slice(width);
+    }
+    if (!cur) cur = word;
+    else if (cur.length + 1 + word.length <= width) cur += ` ${word}`;
+    else { lines.push(cur); cur = word; }
+  }
+  if (cur) lines.push(cur);
+  if (lines.length > maxLines) {
+    const kept = lines.slice(0, maxLines);
+    kept[maxLines - 1] = `${kept[maxLines - 1].slice(0, Math.max(1, width - 1))}…`;
+    return kept;
+  }
+  return lines.length ? lines : [name];
 }
 
 export class InstancedLabelRenderer {
@@ -213,23 +247,22 @@ export class InstancedLabelRenderer {
       pixelWidth: fallbackBoxW,
       pixelHeight: fallbackBoxH,
       aspect: fallbackBoxW / fallbackBoxH,
+      lines: 1,
     };
     this.labelCache.set("__FALLBACK__", fallbackGlyph);
 
     for (let i = 0; i < this.labelCount; i++) {
-      let text = this.labels[i].name;
-      // Truncate overly long labels to prevent wasting atlas texture space
-      if (text.length > 40) {
-        text = `${text.substring(0, 38)}…`;
-      }
+      // fork: wrapped into lines (or truncated to one line when wrapping is off)
+      const lines = labelLines(this.labels[i].name, settings);
+      const text = lines.join("\n");
 
       const cacheKey = `${text}_${textColor}_${bgColor}`;
       if (this.labelCache.has(cacheKey)) continue;
 
-      const metrics = this.atlasCtx.measureText(text);
-      const textWidth = Math.ceil(metrics.width);
+      const lineHeight = Math.round(fontSize * 1.15);
+      const textWidth = Math.ceil(Math.max(...lines.map((l) => this.atlasCtx.measureText(l).width)));
       const boxWidth = textWidth + paddingX * 2;
-      const boxHeight = fontSize + paddingY * 2;
+      const boxHeight = fontSize + paddingY * 2 + (lines.length - 1) * lineHeight;
 
       // Atlas row wrapping
       if (this.atlasCursorX + boxWidth + 2 > this.atlasWidth) {
@@ -253,7 +286,9 @@ export class InstancedLabelRenderer {
 
       // Draw text
       this.atlasCtx.fillStyle = textColor;
-      this.atlasCtx.fillText(text, x + paddingX, y + boxHeight / 2);
+      lines.forEach((line, k) => {
+        this.atlasCtx.fillText(line, x + paddingX, y + paddingY + fontSize / 2 + k * lineHeight);
+      });
 
       // Save UV rect
       const u = x / this.atlasWidth;
@@ -269,6 +304,7 @@ export class InstancedLabelRenderer {
         pixelWidth: boxWidth,
         pixelHeight: boxHeight,
         aspect: boxWidth / boxHeight,
+        lines: lines.length,
       });
 
       this.atlasCursorX += boxWidth + 2;
@@ -329,10 +365,7 @@ export class InstancedLabelRenderer {
     const baseHeight = settings.labelTextSize * 2.2;
 
     for (let i = 0; i < this.labelCount; i++) {
-      let text = this.labels[i].name;
-      if (text.length > 40) {
-        text = `${text.substring(0, 38)}…`;
-      }
+      const text = labelLines(this.labels[i].name, settings).join("\n");
       const cacheKey = `${text}_${textColor}_${bgColor}`;
       const glyph =
         this.labelCache.get(cacheKey) ||
@@ -345,8 +378,11 @@ export class InstancedLabelRenderer {
         uvData[i * 4 + 2] = glyph.w;
         uvData[i * 4 + 3] = glyph.h;
 
-        const h = baseHeight;
-        const w = baseHeight * glyph.aspect;
+        // fork: taller box for wrapped labels (same text size), lifted by the
+        // extra height so it doesn't cover its own node
+        const h = baseHeight * (glyph.pixelHeight / 28); // 28 px = one-line box (20 px font + 2×4 padding)
+        const w = h * glyph.aspect;
+        this.labels[i].lift = (h - baseHeight) / 2;
         scaleData[i * 2] = w;
         scaleData[i * 2 + 1] = h;
       }
@@ -430,7 +466,7 @@ export class InstancedLabelRenderer {
       const label = this.labels[i];
 
       const x = positions[src];
-      const y = positions[src + 1] + label.size * 0.6 + 2.0; // Place above node
+      const y = positions[src + 1] + label.size * 0.6 + 2.0 + (label.lift || 0); // Place above node
       const z = positions[src + 2];
 
       trans[dst] = x;
