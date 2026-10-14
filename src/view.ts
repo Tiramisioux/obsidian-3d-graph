@@ -115,6 +115,12 @@ export class Graph3DView extends ItemView {
   private reusableTargetPosition = new THREE.Vector3();
 
   private dragSyncBuffer: Float32Array = new Float32Array(0);
+  // fork: timeline / storyline
+  private timelineTargets: Float32Array = new Float32Array(0); // target y per node, NaN = undated
+  private storylineOrder: number[] = []; // node indices, oldest → newest
+  private storylineLine: THREE.Line | null = null;
+  private timelineTick = 0;
+  private timelineSyncBuffer: Float32Array = new Float32Array(0);
 
   private frustum = new THREE.Frustum();
   private projScreenMatrix = new THREE.Matrix4();
@@ -243,6 +249,13 @@ export class Graph3DView extends ItemView {
       }
     });
 
+    // fork: presentation switch — network → timeline → timeline + storyline
+    this.presentationButton = controlsContainer.createEl("div", {
+      cls: "graph-3d-reset-toggle graph-3d-presentation-toggle",
+    });
+    this.refreshPresentationButton();
+    this.presentationButton.addEventListener("click", () => this.cyclePresentation());
+
     this.settingsToggleButton = controlsContainer.createEl("div", {
       cls: "graph-3d-settings-toggle",
     });
@@ -265,6 +278,7 @@ export class Graph3DView extends ItemView {
     this.renderGroupSettings(this.settingsPanel);
     this.renderAppearanceSettings(this.settingsPanel);
     this.renderLabelSettings(this.settingsPanel);
+    this.renderTimelineSettings(this.settingsPanel);
     this.renderInteractionSettings(this.settingsPanel);
     this.renderForceSettings(this.settingsPanel);
   }
@@ -520,6 +534,154 @@ export class Graph3DView extends ItemView {
           await updateDisplayAndColors();
         }),
     );
+  }
+
+  // ---- fork: timeline layout + storyline ---------------------------------
+
+  /** a note's date: the YYYYMMDDHHmmss file-name prefix, else frontmatter
+   *  `datum`/`date`, else the file's creation time; null for tags/unknown */
+  private nodeDate(node: GraphNode): number | null {
+    if (node.type !== NodeType.File && node.type !== NodeType.Attachment) return null;
+    const base = (node.id.split("/").pop() || "").replace(/\.[^.]+$/, "");
+    const m = /^(\d{4})(\d{2})(\d{2})(\d{2})?(\d{2})?(\d{2})?(?!\d)/.exec(base);
+    if (m) {
+      const t = new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)).getTime();
+      if (!isNaN(t)) return t;
+    }
+    const file = this.app.vault.getAbstractFileByPath(node.id);
+    if (file instanceof TFile) {
+      const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      const raw = fm?.datum ?? fm?.date;
+      if (raw) {
+        const t = new Date(String(raw).replace(" ", "T")).getTime();
+        if (!isNaN(t)) return t;
+      }
+      return file.stat.ctime;
+    }
+    return null;
+  }
+
+  /** per-node target heights + the chronological order, for the current data */
+  private initTimeline(nodes: GraphNode[]) {
+    this.clearStoryline();
+    const dates = nodes.map((n) => this.nodeDate(n));
+    const known = dates.filter((d): d is number => d !== null);
+    this.timelineTargets = new Float32Array(nodes.length).fill(NaN);
+    this.storylineOrder = [];
+    if (known.length === 0) return;
+    const lo = Math.min(...known), hi = Math.max(...known), span = hi - lo || 1;
+    const L = this.settings.timelineLength;
+    const sign = this.settings.timelineNewestTop ? 1 : -1; // y up: oldest top by default
+    dates.forEach((d, i) => {
+      if (d !== null) this.timelineTargets[i] = sign * ((d - lo) / span - 0.5) * L;
+    });
+    this.storylineOrder = dates
+      .map((d, i) => [d, i] as [number | null, number])
+      .filter(([d, i]) => d !== null && nodes[i].type === NodeType.File)
+      .sort((a, b) => (a[0] as number) - (b[0] as number))
+      .map(([, i]) => i);
+    if (this.settings.storyline && this.storylineOrder.length > 1) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(this.storylineOrder.length * 3), 3));
+      const color = this.settings.useThemeColors
+        ? this.getCssColor("--interactive-accent", this.settings.colorHighlight)
+        : this.settings.colorHighlight;
+      const mat = new THREE.LineBasicMaterial({ color: new THREE.Color(color), transparent: true, opacity: 0.75 });
+      this.storylineLine = new THREE.Line(geo, mat);
+      this.storylineLine.frustumCulled = false;
+      this.graph.scene().add(this.storylineLine);
+    }
+  }
+
+  /** soft pull of dated nodes towards their height on the time axis; synced
+   *  back into the WASM engine every few ticks (positions only — it keeps
+   *  velocities, the same path node dragging uses) */
+  private applyTimeline(positions: Float32Array) {
+    if (!this.settings.timelineLayout || this.timelineTargets.length * 4 > positions.length) return;
+    const k = this.settings.timelineStrength;
+    for (let i = 0; i < this.timelineTargets.length; i++) {
+      const ty = this.timelineTargets[i];
+      if (!isNaN(ty)) positions[i * 4 + 1] += (ty - positions[i * 4 + 1]) * k;
+    }
+    if (++this.timelineTick % 3 === 0 && this.settings.useWasmPhysics) {
+      if (this.timelineSyncBuffer.length !== positions.length) this.timelineSyncBuffer = new Float32Array(positions.length);
+      this.timelineSyncBuffer.set(positions);
+      this.physicsBridge.setPositions(this.timelineSyncBuffer);
+    }
+  }
+
+  private updateStoryline(positions: Float32Array) {
+    if (!this.storylineLine) return;
+    const attr = this.storylineLine.geometry.getAttribute("position") as THREE.BufferAttribute;
+    const arr = attr.array as Float32Array;
+    this.storylineOrder.forEach((idx, j) => {
+      arr[j * 3] = positions[idx * 4];
+      arr[j * 3 + 1] = positions[idx * 4 + 1];
+      arr[j * 3 + 2] = positions[idx * 4 + 2];
+    });
+    attr.needsUpdate = true;
+  }
+
+  private clearStoryline() {
+    if (!this.storylineLine) return;
+    this.storylineLine.parent?.remove(this.storylineLine);
+    this.storylineLine.geometry.dispose();
+    (this.storylineLine.material as THREE.Material).dispose();
+    this.storylineLine = null;
+  }
+
+  private presentationButton: HTMLElement | null = null;
+
+  private presentationMode(): "network" | "timeline" | "storyline" {
+    if (!this.settings.timelineLayout) return "network";
+    return this.settings.storyline ? "storyline" : "timeline";
+  }
+
+  private refreshPresentationButton() {
+    if (!this.presentationButton) return;
+    const mode = this.presentationMode();
+    const icon = { network: "share-2", timeline: "arrow-down-wide-narrow", storyline: "git-commit-vertical" }[mode];
+    const label = { network: "Presentation: network", timeline: "Presentation: timeline", storyline: "Presentation: timeline + storyline" }[mode];
+    this.presentationButton.empty();
+    setIcon(this.presentationButton, icon);
+    this.presentationButton.setAttribute("aria-label", label + " (click for next)");
+  }
+
+  /** network → timeline → timeline + storyline → network */
+  public async cyclePresentation() {
+    const next = { network: "timeline", timeline: "storyline", storyline: "network" }[this.presentationMode()];
+    this.settings.timelineLayout = next !== "network";
+    this.settings.storyline = next === "storyline";
+    await this.plugin.saveSettings();
+    this.refreshPresentationButton();
+    if (this.isSettingsPanelOpen()) this.renderSettingsPanel();
+    await this.updateData({ useCache: true, reheat: true });
+    window.setTimeout(() => this.graph?.zoomToFit(800), 1500);
+  }
+
+  private renderTimelineSettings(container: HTMLElement) {
+    new Setting(container).setHeading().setName("Timeline");
+    const redraw = async () => {
+      await this.plugin.saveSettings();
+      this.refreshPresentationButton();
+      this.updateData({ useCache: true, reheat: true });
+    };
+    new Setting(container)
+      .setName("Timeline layout")
+      .setDesc("Order notes vertically by date (file-name timestamp, then datum, then creation date).")
+      .addToggle((t) => t.setValue(this.settings.timelineLayout).onChange(async (v) => { this.settings.timelineLayout = v; await redraw(); }));
+    new Setting(container).setName("Newest at the top").addToggle((t) =>
+      t.setValue(this.settings.timelineNewestTop).onChange(async (v) => { this.settings.timelineNewestTop = v; await redraw(); }));
+    new Setting(container).setName("Timeline strength").addSlider((s) =>
+      s.setLimits(0.01, 0.5, 0.01).setValue(this.settings.timelineStrength).setDynamicTooltip()
+        .onChange(async (v) => { this.settings.timelineStrength = v; await this.plugin.saveSettings(); }));
+    new Setting(container).setName("Timeline length").addSlider((s) =>
+      s.setLimits(100, 3000, 50).setValue(this.settings.timelineLength).setDynamicTooltip()
+        .onChange(async (v) => { this.settings.timelineLength = v; await redraw(); }));
+    new Setting(container)
+      .setName("Storyline")
+      .setDesc("A line through the notes in date order.")
+      .addToggle((t) => t.setValue(this.settings.storyline).onChange(async (v) => { this.settings.storyline = v; await redraw(); }));
   }
 
   private renderLabelSettings(container: HTMLElement) {
@@ -1056,6 +1218,7 @@ export class Graph3DView extends ItemView {
             0.6,
           );
           this.labelRenderer?.initLabels(newData.nodes, this.settings, 4);
+          this.initTimeline(newData.nodes);
 
           this.updateForces();
           this.updateDisplay();
@@ -1075,7 +1238,9 @@ export class Graph3DView extends ItemView {
             )
             .then(() => {
               this.physicsBridge.onTick((positions) => {
+                this.applyTimeline(positions);
                 this.currentPositions = positions;
+                this.updateStoryline(positions);
                 this.instancedRenderer?.updatePositions(positions);
                 if (this.settings.showNodeLabels && !this.settings.performanceMode) {
                   this.labelRenderer?.updateVisibilityAndOcclusion(
@@ -1110,6 +1275,7 @@ export class Graph3DView extends ItemView {
         this.graph.graphData({ nodes: [], links: [] });
         this.instancedRenderer?.clear();
         this.labelRenderer?.clear();
+        this.clearStoryline();
         this.currentPositions = new Float32Array(0);
         this.currentNodes = [];
         this.currentLinks = [];

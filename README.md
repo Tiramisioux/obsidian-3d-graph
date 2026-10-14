@@ -1,4 +1,76 @@
-# 3D Graph for Obsidian
+# 3D Graph for Obsidian — Tiramisioux fork
+
+A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Aryan Gupta, with fixes and extra ways to present your vault. Everything from the original works the same; this fork adds what's listed below.
+
+> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **based on:** 2.8.1
+> It has its own id on purpose: a community-store update of the original can never overwrite it.
+
+## What this fork adds
+
+| | Feature | How to use it |
+|---|---|---|
+| 🐞 | **Labels that actually show** | Fixed: with a filter or a small graph, node labels were invisible, and in large graphs they could show the wrong names. Nothing to set. ([reported upstream: #16](https://github.com/Apoo711/obsidian-3d-graph/issues/16)) |
+| ✂️ | **Shorter labels** | *Settings → Strip from label (regex)* removes a pattern from note labels, e.g. a Zettelkasten timestamp; *Underscores as spaces* tidies the rest. Search still matches the full file name; tag labels are left alone. |
+| 👁 | **Page preview on hover** | Hover a note node to see Obsidian's page preview. Needs the core *Page preview* plugin. Turn it off under *Settings → Page preview on hover*, or require a modifier key under *Settings → Page preview → 3D Graph*. |
+| 🕰 | **Timeline layout** | Notes are pulled **vertically by date** — oldest at the top, newest at the bottom (or the other way with *Newest at the top*). Links still cluster related notes, so it's a rough timeline, not a ruler. |
+| 🧵 | **Storyline** | A thin line threads through the notes in date order, so you can follow the story from first note to last. |
+| 🔀 | **Presentation switch** | A button in the graph's top-right toolbar (and the command *Next presentation*) steps through **Network → Timeline → Timeline + storyline**. |
+
+### Example: Zettelkasten file names
+
+File names like `20261014104013 RISE UND inspo_verksamhetslogik` become the label **inspo verksamhetslogik** with:
+
+- *Strip from label (regex):* `^\d{14}\s+(?:[A-ZÅÄÖ0-9_]+\s+){0,2}` — the 14-digit timestamp and up to two ALL-CAPS words (context, project)
+- *Underscores as spaces:* on
+
+Handy together with a tag filter: when you filter on a project, its name is implied, so it doesn't need to be on every label.
+
+### How a note's date is found (timeline + storyline)
+
+1. a `YYYYMMDD` / `YYYYMMDDHHmmss` prefix in the file name,
+2. otherwise the frontmatter property `datum` or `date`,
+3. otherwise the file's creation date.
+
+Tags have no date and aren't pulled; attachments are pulled but not part of the storyline.
+
+## Settings added by the fork
+
+| Setting | Where | Default |
+|---|---|---|
+| Strip from label (regex) | Settings → Labels | *(empty)* |
+| Underscores as spaces in labels | Settings → Labels | off |
+| Page preview on hover | Settings → Interaction | on |
+| Timeline layout · Newest at the top · Timeline strength · Timeline length · Storyline | graph view ⚙ → *Timeline* | off · off · 0.08 · 600 · off |
+
+## Install
+
+1. Build it (below) or take `main.js`, `manifest.json` and `styles.css` from a release.
+2. Copy the three files into `<your vault>/.obsidian/plugins/new-3d-graph-tiramisioux/`.
+3. Settings → Community plugins → enable **New 3D Graph (Tiramisioux fork)**.
+4. **Disable the original *New 3D Graph*** — both register the same view, so only one should be on.
+5. Optional: copy the original's `data.json` into the fork's folder to keep your settings and filters.
+
+## Updates and upstream
+
+- The fork isn't in the community store; update it by pulling this repo and rebuilding.
+- Upstream changes from [Apoo711/obsidian-3d-graph](https://github.com/Apoo711/obsidian-3d-graph) are merged by hand (`git fetch upstream && git merge upstream/main`).
+- Fork work lives on the default branch `tiramisioux`; `main` follows upstream.
+
+## Building
+
+```bash
+npm ci
+npx tsc -noEmit -skipLibCheck && node esbuild.config.mjs production
+```
+
+The Rust/WASM physics engine is prebuilt in `src/physics/wasm-data.ts`; `wasm-pack` (`npm run build`) is only needed when changing `crates/`.
+
+Fork changes, by file: label fix + label formatting in `src/rendering/label-renderer.ts`; page preview, timeline, storyline and the presentation switch in `src/view.ts`; new settings in `src/types.ts` / `src/settings.ts`; hover source and command in `main.ts`.
+
+---
+
+## Original README (upstream)
+
 
 ![hero](assets/hero.png)
 
@@ -80,24 +152,3 @@ Go to `Settings` > `3D Graph Plugin` or use the in-graph floating settings gear 
 - **Rust & WebAssembly**: High-performance physics core using `glam` SIMD vector math, `wasm-bindgen`, and `wasm-opt`.
 - **Three.js**: 3D scene rendering, lighting, and GPU instancing.
 - Built with ❤️ for the Obsidian community.
-
----
-
-## Tiramisioux fork
-
-Branch `tiramisioux` of [Tiramisioux/obsidian-3d-graph](https://github.com/Tiramisioux/obsidian-3d-graph), installed as its own plugin id **`new-3d-graph-tiramisioux`** ("New 3D Graph (Tiramisioux fork)") so community updates of the original never overwrite it.
-
-| Change | Where |
-|---|---|
-| **Label fix** — the label atlas was uploaded with `flipY`, while the shader uses top-down canvas UVs; with a filter / small graph every label sampled empty atlas rows and was discarded (reported upstream: [Apoo711/obsidian-3d-graph#16](https://github.com/Apoo711/obsidian-3d-graph/issues/16)) | `src/rendering/label-renderer.ts` |
-| **Label formatting** — *Strip from label (regex)* and *Underscores as spaces*; search still matches the full name; tag labels untouched | `formatLabel()` in `label-renderer.ts`, settings in `src/types.ts` / `src/settings.ts` |
-| **Page preview on hover** — Obsidian's native preview when hovering a note node (core *Page preview* plugin; same contract as Obsidian's 2D graph: `targetEl: null`, view as `hoverParent`) | `showHoverPreview()` in `src/view.ts`, hover source registered in `main.ts` |
-
-Build (the WASM physics is prebuilt in `src/physics/wasm-data.ts`; `wasm-pack` only needed when changing `crates/`):
-
-```bash
-npm ci && npx tsc -noEmit -skipLibCheck && node esbuild.config.mjs production
-```
-
-Install: copy `main.js`, `manifest.json`, `styles.css` into `<vault>/.obsidian/plugins/new-3d-graph-tiramisioux/`.
-Example label setting for Zettelkasten names `20261014104013 RISE UND inspo_verksamhetslogik` → `inspo verksamhetslogik`: strip `^\d{14}\s+(?:[A-ZÅÄÖ0-9_]+\s+){0,2}` + underscores as spaces.

@@ -56,6 +56,16 @@ export interface Graph3DPluginSettings {
   labelUnderscoresToSpaces: boolean;
   /** fork: Obsidian page preview when hovering a note node */
   hoverPreview: boolean;
+  /** fork: pull notes along the vertical axis by date */
+  timelineLayout: boolean;
+  /** fork: how hard notes are pulled to their date (0.01–0.5) */
+  timelineStrength: number;
+  /** fork: length of the time axis in world units */
+  timelineLength: number;
+  /** fork: newest notes at the top instead of the bottom */
+  timelineNewestTop: boolean;
+  /** fork: draw a line through the notes in date order */
+  storyline: boolean;
   useKeyboardControls: boolean;
   keyboardMoveSpeed: number;
   zoomOnClick: boolean;
@@ -105,6 +115,11 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   labelStripPattern: "",
   labelUnderscoresToSpaces: false,
   hoverPreview: true,
+  timelineLayout: false,
+  timelineStrength: 0.08,
+  timelineLength: 600,
+  timelineNewestTop: false,
+  storyline: false,
   useKeyboardControls: true,
   keyboardMoveSpeed: 2.0,
   zoomOnClick: true,

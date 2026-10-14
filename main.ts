@@ -24,6 +24,18 @@ export default class Graph3DPlugin extends Plugin {
 		);
 
 		this.addCommand({
+			id: "cycle-presentation",
+			name: "Next presentation (network → timeline → storyline)",
+			callback: () => {
+				this.app.workspace
+					.getLeavesOfType(VIEW_TYPE_3D_GRAPH)
+					.forEach((leaf) => {
+						if (leaf.view instanceof Graph3DView) leaf.view.cyclePresentation();
+					});
+			},
+		});
+
+		this.addCommand({
 			id: "open-3d-graph-view",
 			name: "Open 3d graph",
 			callback: () => {
