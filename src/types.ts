@@ -89,6 +89,9 @@ export interface Graph3DPluginSettings {
   trackpadPan: boolean;
   /** fork: dated `#<eventTag>` todos become nodes of their own, at their due date */
   showEvents: boolean;
+  /** fork: show the node of the tag the graph is filtered on (a project
+   *  scope) — every note links to it, which pulls the layout into one knot */
+  showScopeTag: boolean;
   /** fork: the tag that marks a meeting todo (without #) */
   eventTag: string;
   /** fork: colour of meeting/event nodes */
@@ -160,6 +163,7 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   flat2D: false,
   trackpadPan: true,
   showEvents: true,
+  showScopeTag: false,
   eventTag: "röd",
   colorEvent: "#d32a32",
   useKeyboardControls: true,

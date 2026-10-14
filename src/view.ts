@@ -170,6 +170,7 @@ export class Graph3DView extends ItemView {
   private settleTicks = 0;
   private switchPanel: SwitchPanel | null = null;
   private lastGridUnit: "week" | "month" | "auto" = "auto";
+  private timelinePreviewFrame = 0;
 
   private frustum = new THREE.Frustum();
   private projScreenMatrix = new THREE.Matrix4();
@@ -385,6 +386,21 @@ export class Graph3DView extends ItemView {
       commandId: "toggle-newest-top",
       disabled: noTimeline,
     });
+    panel.addSlider({
+      label: "Height",
+      min: 100,
+      max: 3000,
+      step: 50,
+      get: () => st.timelineLength,
+      preview: (v) => this.previewTimelineLength(v),
+      set: async (v) => {
+        this.previewTimelineLength(v);
+        await save();
+        if (this.isSettingsPanelOpen()) this.renderSettingsPanel();
+      },
+      tooltip: "Vertical scale: how tall the whole date range is (= Timeline length)",
+      disabled: noTimeline,
+    });
     panel.addSwitch({
       label: "Storyline",
       get: () => st.storyline,
@@ -423,6 +439,13 @@ export class Graph3DView extends ItemView {
       label: "Labels",
       get: () => st.showNodeLabels,
       set: async (v) => { st.showNodeLabels = v; await save(); this.updateLabels(); },
+    });
+    panel.addSwitch({
+      label: "Project tag",
+      get: () => st.showScopeTag,
+      set: async (v) => { st.showScopeTag = v; await save(); await this.updateData({ useCache: true, reheat: true }); },
+      tooltip: "The node of the tag the graph is filtered on (e.g. #STOPP) — every note links to it",
+      disabled: () => !st.showTags || !st.filters.some((f) => f.enabled && f.type === "tag" && f.value.trim() !== ""),
     });
     panel.addSwitch({
       label: "Events",
@@ -970,6 +993,20 @@ export class Graph3DView extends ItemView {
       (s.sprite as any).textHeight = labelH;
       s.sprite.visible = true;
     }
+  }
+
+  /** fork: stretch the timeline live (the switch panel's Height slider) —
+   *  new date targets, storyline and grid for the current nodes, and the
+   *  layout follows; no data reload. One rebuild per frame while dragging. */
+  private previewTimelineLength(length: number) {
+    this.settings.timelineLength = length;
+    if (!this.isGraphInitialized || !this.settings.timelineLayout || !this.currentNodes.length) return;
+    if (this.timelinePreviewFrame) return;
+    this.timelinePreviewFrame = window.requestAnimationFrame(() => {
+      this.timelinePreviewFrame = 0;
+      this.initTimeline(this.currentNodes);
+      this.wakePhysics();
+    });
   }
 
   private clearStoryline() {
@@ -2881,8 +2918,19 @@ export class Graph3DView extends ItemView {
       return true;
     };
 
+    // fork: the tag the graph is filtered on (e.g. #STOPP for the STOPP
+    // project) is hidden unless asked for: every note links to it, so it
+    // pulls them all into one knot. Notes then hang together only through
+    // their own links (sub-tags like #STOPP/kosmetika stay).
+    const scopeTags = new Set(
+      this.settings.showScopeTag
+        ? []
+        : activeFilters
+            .filter((f) => f.type === "tag")
+            .map((f) => `#${f.value.trim().replace(/^#/, "").toLowerCase()}`),
+    );
     const isTypeVisible = (node: GraphNode): boolean => {
-      if (node.type === NodeType.Tag) return showTags;
+      if (node.type === NodeType.Tag) return showTags && !scopeTags.has(node.name.toLowerCase());
       if (node.type === NodeType.Attachment) return showAttachments;
       return true;
     };

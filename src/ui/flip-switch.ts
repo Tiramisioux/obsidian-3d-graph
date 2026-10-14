@@ -33,6 +33,22 @@ export interface SegmentedSwitchSpec<T extends string> {
   disabled?: () => boolean;
 }
 
+export interface SliderSpec {
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  get: () => number;
+  /** while dragging — a live preview, nothing saved */
+  preview?: (value: number) => unknown;
+  /** on release — keep the value */
+  set: (value: number) => unknown | Promise<unknown>;
+  format?: (value: number) => string;
+  tooltip?: string;
+  commandId?: string;
+  disabled?: () => boolean;
+}
+
 export interface SwitchPanelOptions {
   title: string;
   collapsed: boolean;
@@ -153,6 +169,53 @@ export class SwitchPanel {
       }
       row.toggleClass("is-disabled", disabled);
       row.setAttribute("aria-label", this.tooltipFor(spec));
+    };
+    this.controls.push({ refresh });
+    refresh();
+  }
+
+  /** a labelled slider (Obsidian's own `.slider` look) with its value
+   *  shown; `preview` while dragging, `set` on release */
+  addSlider(spec: SliderSpec) {
+    const row = this.body.createDiv({ cls: "graph-3d-switch-row graph-3d-switch-row-slider" });
+    const head = row.createDiv({ cls: "graph-3d-switch-slider-head" });
+    head.createSpan({ cls: "graph-3d-switch-label", text: spec.label });
+    const value = head.createSpan({ cls: "graph-3d-switch-value" });
+    const input = row.createEl("input", {
+      cls: "slider graph-3d-slider",
+      attr: { type: "range", min: String(spec.min), max: String(spec.max), step: String(spec.step), "data-ignore-swipe": "true" },
+    });
+    const fmt = (v: number) => (spec.format ? spec.format(v) : String(v));
+    // Obsidian's slider CSS draws the filled part of the track from this
+    // variable (its SliderComponent sets it the same way)
+    const fill = (v: number) =>
+      input.style.setProperty("--slider-fill-ratio", String((v - spec.min) / (spec.max - spec.min || 1)));
+    let dragging = false;
+    input.addEventListener("input", () => {
+      dragging = true;
+      const v = Number(input.value);
+      value.setText(fmt(v));
+      fill(v);
+      spec.preview?.(v);
+    });
+    input.addEventListener("change", async () => {
+      try {
+        await spec.set(Number(input.value));
+      } finally {
+        dragging = false;
+        this.refresh();
+      }
+    });
+    const refresh = () => {
+      const disabled = !!spec.disabled?.();
+      input.disabled = disabled;
+      row.toggleClass("is-disabled", disabled);
+      row.setAttribute("aria-label", this.tooltipFor(spec));
+      if (dragging) return;
+      const v = spec.get();
+      input.value = String(v);
+      value.setText(fmt(v));
+      fill(v);
     };
     this.controls.push({ refresh });
     refresh();

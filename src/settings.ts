@@ -172,6 +172,16 @@ export class Graph3DSettingsTab extends PluginSettingTab {
         this.triggerUpdate({ redrawData: true, useCache: true });
       }),
     );
+    new Setting(containerEl)
+      .setName("Show the filtered tag")
+      .setDesc("When the graph is filtered on a tag (a project), that tag's own node — every note links to it, which pulls the layout into one knot. Off: notes hang together only through their own links.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showScopeTag).onChange(async (value) => {
+          this.plugin.settings.showScopeTag = value;
+          await this.plugin.saveSettings();
+          this.triggerUpdate({ redrawData: true, useCache: true });
+        }),
+      );
     new Setting(containerEl).setName("Show attachments").addToggle((toggle) =>
       toggle.setValue(this.plugin.settings.showAttachments).onChange(async (value) => {
         this.plugin.settings.showAttachments = value;

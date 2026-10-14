@@ -277,6 +277,34 @@
 	padding: 4px 0;
 }
 
+/* fork: slider rows (Height) — label + value above a full-width slider */
+.graph-3d-switch-row-slider {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 2px;
+	cursor: default;
+	padding: 4px 0;
+}
+
+.graph-3d-switch-slider-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.graph-3d-switch-value {
+	flex: 0 0 auto;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.graph-3d-switch-row-slider .graph-3d-slider {
+	width: 100%;
+	margin: 0;
+}
+
 .graph-3d-segmented {
 	display: flex;
 	flex: 0 0 auto;
