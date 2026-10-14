@@ -2,7 +2,7 @@
 
 A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Aryan Gupta, with fixes and extra ways to present your vault. Everything from the original works the same; this fork adds what's listed below.
 
-> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.8 · **based on:** 2.8.1
+> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.9 · **based on:** 2.8.1
 > It has its own id on purpose: a community-store update of the original can never overwrite it.
 
 ## What this fork adds
@@ -33,7 +33,7 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 | **⌥⌘P** | 2D mode on / off |
 | **Space + drag** · **two-finger drag** | pan the view |
 
-Defaults set by the fork; change them under *Settings → Hotkeys* (search "3D graph").
+Defaults set by the fork; change them under *Settings → Hotkeys* (search "3D graph"). Hovering a toolbar button shows its current shortcut (your own binding if you changed it), and the help line at the bottom of the graph lists the mouse and trackpad gestures.
 
 ### What "Open in 3D graph" shows
 

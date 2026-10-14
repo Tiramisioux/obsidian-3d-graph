@@ -249,7 +249,7 @@ export class Graph3DView extends ItemView {
       cls: "graph-3d-reset-toggle",
     });
     setIcon(resetViewButton, "refresh-cw");
-    resetViewButton.setAttribute("aria-label", "Reset view");
+    resetViewButton.setAttribute("aria-label", "Reset view (zoom to fit)");
     resetViewButton.addEventListener("click", () => {
       if (this.graph && this.isGraphInitialized) {
         this.graph.zoomToFit(800);
@@ -798,6 +798,28 @@ export class Graph3DView extends ItemView {
   }
 
   private presentationButton: HTMLElement | null = null;
+
+  /** fork: " · ⌥⌘G" — the command's current hotkey as Obsidian prints it
+   *  (follows the user's own bindings), or "" when it has none */
+  private hotkeyHint(commandId: string): string {
+    try {
+      const hk = (this.app as any).hotkeyManager?.printHotkeyForCommand?.(`${this.plugin.manifest.id}:${commandId}`);
+      return hk ? ` · ${hk}` : "";
+    } catch {
+      return "";
+    }
+  }
+
+  /** fork: the library's bottom help line, with the fork's gestures */
+  private refreshNavInfo() {
+    const el = this.graphContainer?.querySelector(".scene-nav-info") as HTMLElement | null;
+    if (!el) return;
+    el.setText(
+      this.settings.flat2D
+        ? "2D · Drag / Space+drag / two-finger: pan · Pinch / wheel: zoom · Click node: focus"
+        : "Drag: rotate · Space+drag / two-finger / right-drag: pan · Pinch / wheel: zoom · WASD QE: move · Click node: focus",
+    );
+  }
   private flatButton: HTMLElement | null = null;
   private reverseButton: HTMLElement | null = null;
 
@@ -806,7 +828,7 @@ export class Graph3DView extends ItemView {
     this.reverseButton.empty();
     const top = this.settings.timelineNewestTop;
     setIcon(this.reverseButton, top ? "arrow-up-narrow-wide" : "arrow-down-narrow-wide");
-    this.reverseButton.setAttribute("aria-label", top ? "Timeline: newest at the top — click to reverse" : "Timeline: oldest at the top — click to reverse");
+    this.reverseButton.setAttribute("aria-label", (top ? "Timeline: newest at the top — click to reverse" : "Timeline: oldest at the top — click to reverse") + this.hotkeyHint("toggle-newest-top"));
     this.reverseButton.toggleClass("is-inactive", !this.settings.timelineLayout);
   }
 
@@ -823,7 +845,8 @@ export class Graph3DView extends ItemView {
     if (!this.flatButton) return;
     this.flatButton.empty();
     setIcon(this.flatButton, this.settings.flat2D ? "box" : "square");
-    this.flatButton.setAttribute("aria-label", this.settings.flat2D ? "2D mode on — click for 3D" : "3D — click for 2D mode");
+    this.flatButton.setAttribute("aria-label", (this.settings.flat2D ? "2D mode on — click for 3D" : "3D — click for 2D mode") + this.hotkeyHint("toggle-2d"));
+    this.refreshNavInfo();
   }
 
   /** fork: flatten into a plane facing the camera (rotation locked), or back to 3D */
@@ -856,7 +879,7 @@ export class Graph3DView extends ItemView {
     const label = { network: "Presentation: network", timeline: "Presentation: timeline", storyline: "Presentation: timeline + storyline" }[mode];
     this.presentationButton.empty();
     setIcon(this.presentationButton, icon);
-    this.presentationButton.setAttribute("aria-label", label + " (click for next)");
+    this.presentationButton.setAttribute("aria-label", label + " (click for next)" + this.hotkeyHint("cycle-presentation"));
   }
 
   /** network → timeline → timeline + storyline → network */
@@ -1362,6 +1385,7 @@ export class Graph3DView extends ItemView {
 
       this.setupPointerInteractions();
       this.setupPanControls();
+      this.refreshNavInfo();
 
       this.graph.graphData({ nodes: [], links: [] });
 
