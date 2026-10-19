@@ -2,7 +2,7 @@
 
 A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Aryan Gupta, with fixes and extra ways to present your vault. Everything from the original works the same; this fork adds what's listed below.
 
-> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.12 · **based on:** 2.8.1
+> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.17 · **based on:** 2.8.1
 > It has its own id on purpose: a community-store update of the original can never overwrite it.
 
 ## What this fork adds
@@ -28,13 +28,14 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 | ⌨️ | **Shortcuts keep working in the graph** | Fixed: with keyboard camera controls on, ⌘Q, ⌘W, ⌘S, ⌘E … did nothing while the graph had focus (the Q/W/S/E/A/D movement keys swallowed them) and the camera could keep drifting afterwards. |
 | 🎚 | **Switch panel** | Top right in the graph, under the reset and ⚙ buttons: the view's on/off options as flip switches (Obsidian's own toggle look) — **Presentation** (*Network / Timeline / Story*), **2D mode**, **Timeline layout**, **Direction** (*Vertical / Horizontal*), **Shape** (*Spread / Line*), **Newest at the top** (*… on the left* when horizontal), **Height** (*Width* when horizontal — a slider: the timeline's scale; drag and the notes spread out or close up live, the grid with them; saved when you let go), **Storyline**, **Time grid** + *Week / Month / Auto*, **Grid hover**, **Labels**, **Project tag**, **People**, **Events**, **Page preview**, **Trackpad pan**. A switch always shows the live state — a hotkey or the settings flip it visibly — and its tooltip shows the hotkey. Click *Display* to fold the panel away (remembered). Replaces the presentation, reverse and 2D toolbar buttons. |
 | 🔀 | **Presentation switch** | *Presentation* in the switch panel, or **⌥⌘G** (command *Next presentation*), steps through **Network → Timeline → Timeline + storyline**. |
-| 🎨 | **Colour by note type** | Two new colour-group rules (*Settings → Color Groups*): **`prop: key=value`** matches a frontmatter property (`prop: typ=hub`, several values with `\|`: `prop: källa=email\|mail`, or just `prop: status` for "has the property"), **`name: <regex>`** matches the node's name — `name: .` is a catch-all for "every other note" — and **`palette: key=path/to/note.md`** takes the colours from a note: every `value: "#hex"` line in that note's frontmatter colours the notes whose property `key` has that value (`palette: källa=_views/kortfärger.md`). Change a colour in the note and the graph follows at once; lines that aren't hex colours are skipped, and the group's own colour is ignored. The first group that matches wins, so put the catch-all last. See the example below. |
+| 🎨 | **Colour by note type** | Two new colour-group rules (*Settings → Color Groups*): **`prop: key=value`** matches a frontmatter property (`prop: typ=hub`, several values with `\|`: `prop: typ=email\|mail`, or just `prop: status` for "has the property"), **`name: <regex>`** matches the node's name — `name: .` is a catch-all for "every other note" — and **`palette: key=path/to/note.md`** takes the colours from a note: every `value: "#hex"` line in that note's frontmatter colours the notes whose property `key` has that value (`palette: typ=_views/kortfärger.md`). Change a colour in the note and the graph follows at once; lines that aren't hex colours are skipped, and the group's own colour is ignored. The first group that matches wins, so put the catch-all last. See the example below. |
 | 📅 | **Meetings as events** | A todo with the meeting tag (default `#röd`) and a due date — `- [ ] möte med Anna #röd [due:: 2026-10-20 10:00]` — becomes a **node of its own**, linked to its note, labelled *20 okt möte med Anna* and placed at **its own date** on the timeline and storyline. Hover it for the note's preview, double-click to open the note. If you keep a meeting note (`typ: möte`, named with the meeting's timestamp and the same text), the note stands in for the todo and no extra node is drawn. *Settings → Meetings*: on/off, tag, colour (red). |
 | 🕸 | **Project tag hidden** | When the graph is filtered on a tag — a project, e.g. `#STOPP` — that tag's own node is left out by default. Every note links to it, so it pulled the whole project into one knot; now notes hang together only through their own links (sub-tags like `#STOPP/kosmetika` stay), and notes without any float free. Switch *Project tag* (switch panel) brings it back. |
 | ↔️ | **Timeline across or along, spread or straight** | *Direction*: time runs **up/down** or **left → right** (oldest on the left; *Newest on the left* reverses it). *Shape*: **Spread** keeps the network's shape across the time axis; **Line** puts every dated note on **one straight line** in date order — where dates crowd, the line stretches just enough that each label clears its neighbour, elsewhere the spacing is true to the dates (the time grid follows). Works with the storyline, the grid, grid hover and 2D mode. Switch panel, graph ⚙ → *Timeline*, or the commands *Timeline: vertical ↔ horizontal* and *Timeline: spread ↔ straight line* (no default keys — bind your own). The camera refits once the notes have moved. A long line is framed whole, so zoom in to read the labels. |
 | 👤 | **People kept out of project views** | A person note (`typ: person`) carries the tags of its projects, so it used to turn up in every project graph. In a tag (project) view it's now left out — notes *about* the person (an email, a `samtal`) stay. Switch *People* brings them back. |
 | 🪟 | **Page preview without properties** | The graph's hover preview starts with the note's text; the properties block (*Egenskaper*) is hidden there — only there. *Settings → Interaction → Properties in the page preview* shows it again. |
 | 🐞 | **Zoom to fit works** | Fixed: the ↻ button, and the camera fit after opening a folder or switching the timeline, did nothing — the library measured its own node objects, which this plugin hides and never moves. The fork frames the notes' real positions, keeping your viewing direction. |
+| 🗂 | **Follows the vault's tree contract** | *Open in 3D graph* reads the vault's tree from `.obsidian/vault-struktur.json` (areas `01_HEM/`, `02_PROJEKT/`, `03_RISE/`, an `_archive/` per kontext) through the vendored library `src/fork/vault_struktur.js`; the rules sit in the pure `src/fork/scope.js` (`node tests/scope.test.mjs`). Archived projects and archived kontexts open exactly like active ones. Without the contract file the command shows a notice and does nothing. |
 | 🎯 | **Open a folder, hub or note in the graph** | Right-click a folder or note in the file list → **Open in 3D graph**, or press **⌘⇧G** for the note you're in. A folder shows everything inside it; a note or hub shows its **project** with the note **highlighted** (larger, highlight colour) and the camera on it — so you see where it sits in the structure. |
 
 ### Keyboard shortcuts
@@ -54,9 +55,9 @@ Defaults set by the fork; change them under *Settings → Hotkeys* (search "3D g
 
 | You pick | The graph shows | Highlighted |
 |---|---|---|
-| a folder | everything under that folder — for a project folder (`…/<context>/<project>`) also the notes elsewhere that belong to the project (below) | — (zooms to fit) |
+| a folder | everything under that folder — for a project folder (`01_HEM/<project>`, `03_RISE/<project>`, `02_PROJEKT/<kontext>/<project>`, archived ones under `_archive/` too) or a `02_PROJEKT/<kontext>` folder (the kontext is itself a project) also the notes elsewhere that belong to the project (below) | — (zooms to fit) |
 | a note or hub with a `projekt: "#X"` property | everything tagged `#X` — the project | that note |
-| a note in a project folder (`…/<context>/<project>/…`) without `projekt` | that project folder + the notes elsewhere that belong to the project | that note |
+| a note in a project folder (as above; a note in a `02_PROJEKT/<kontext>/…` kontext folder belongs to the kontext) without `projekt` | that project folder + the notes elsewhere that belong to the project | that note |
 | any other note | the note and the notes it links to / from | that note |
 
 It replaces the graph's current filter; set a filter yourself any time to change it.
@@ -81,10 +82,10 @@ Groups as in the author's vault (first match wins):
 | `prop: typ=hub` | graphite | project hubs |
 | `prop: typ=person` | blue | person notes |
 | `prop: typ=möte` | red | meeting notes |
-| `palette: källa=_views/kortfärger.md` | from the note | every note by its `källa` — the same colours the vault's project hubs tint their document cards with (*email*, *digital anteckning*, *clipping* …) |
+| `palette: typ=_views/kortfärger.md` | from the note | every note by its `typ` — the same colours the vault's project hubs tint their document cards with (*email*, *digital anteckning*, *clipping* …) |
 | `name: .` | white | every other note |
 
-The palette note's frontmatter is just `källa value: "#hex"` pairs:
+The palette note's frontmatter is just `typ value: "#hex"` pairs:
 
 ```yaml
 ---

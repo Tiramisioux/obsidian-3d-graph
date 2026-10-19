@@ -2316,7 +2316,7 @@ export class Graph3DView extends ItemView {
     const expanded = this.settings.groups
       .map((group): PreprocessedGroup | PreprocessedGroup[] => {
         const query = group.query.toLowerCase();
-        // fork: colours from a note — "palette: källa=_views/kortfärger.md"
+        // fork: colours from a note — "palette: typ=_views/kortfärger.md"
         if (query.startsWith("palette:")) return this.paletteGroups(group.query.substring(8).trim());
         if (!query) {
           return {
@@ -2341,7 +2341,7 @@ export class Graph3DView extends ItemView {
             tagQuery: query.substring(4).trim().replace(/^#/, ""),
           };
         } else if (query.startsWith("prop:")) {
-          // fork: frontmatter property — "prop: typ=person", alternatives with | ("prop: källa=email|mail")
+          // fork: frontmatter property — "prop: typ=person", alternatives with | ("prop: typ=email|mail")
           const body = group.query.substring(5).trim();
           const eq = body.indexOf("=");
           return {

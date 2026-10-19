@@ -212,7 +212,7 @@ export class Graph3DSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl).setName("Color Groups").setHeading();
     containerEl.createEl("p", {
-      text: 'Color nodes with custom rules; the first matching group wins. Use "path:", "tag:", "file:", "prop:", "palette:", "name:", or text match. Examples: path:folder, tag:#project, file:MyNote.md, file:*.pdf, prop:typ=hub, prop:källa=email|mail, prop:status (key set at all), palette:källa=_views/kortfärger.md (colours from that note\'s frontmatter, value: "#hex" per line — follows edits live; the group\'s own colour is ignored), name:. (every note — put it last as a catch-all)',
+      text: 'Color nodes with custom rules; the first matching group wins. Use "path:", "tag:", "file:", "prop:", "palette:", "name:", or text match. Examples: path:folder, tag:#project, file:MyNote.md, file:*.pdf, prop:typ=hub, prop:typ=email|mail, prop:status (key set at all), palette:typ=_views/kortfärger.md (colours from that note\'s frontmatter, value: "#hex" per line — follows edits live; the group\'s own colour is ignored), name:. (every note — put it last as a catch-all)',
       cls: "setting-item-description",
     });
 
