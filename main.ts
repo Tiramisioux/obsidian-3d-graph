@@ -1,13 +1,18 @@
-import { Plugin, TAbstractFile, TFile, TFolder, debounce } from "obsidian";
+import { Notice, Plugin, TAbstractFile, TFile, TFolder, debounce } from "obsidian";
 import { Graph3DPluginSettings, DEFAULT_SETTINGS, type Filter } from "./src/types";
 import { Graph3DView, VIEW_TYPE_3D_GRAPH } from "./src/view";
 import { Graph3DSettingsTab } from "./src/settings";
+import VaultStruktur from "./src/fork/vault_struktur"; // fork: the vault tree contract (vendored library)
+import { scopeFilters } from "./src/fork/scope"; // fork: the pure scope rules of "Open in 3D graph"
 
 export default class Graph3DPlugin extends Plugin {
 	settings: Graph3DPluginSettings;
+	/** fork: the parsed .obsidian/vault-struktur.json (null while the vault has none) */
+	private forkContract: VaultStruktur.Config | null = null;
 
 	async onload() {
 		await this.loadSettings();
+		this.forkContract = await this.readForkContract(); // fork: the tree contract, read at load
 		this.registerView(
 			VIEW_TYPE_3D_GRAPH,
 			(leaf) => new Graph3DView(leaf, this),
@@ -125,42 +130,49 @@ export default class Graph3DPlugin extends Plugin {
 		);
 	}
 
+	/** fork: read .obsidian/vault-struktur.json; null when it is missing or not JSON */
+	private async readForkContract(): Promise<VaultStruktur.Config | null> {
+		try {
+			return JSON.parse(await this.app.vault.adapter.read(this.app.vault.configDir + "/vault-struktur.json"));
+		} catch {
+			return null;
+		}
+	}
+
 	/**
-	 * fork: what to show for a folder / hub / note.
-	 * - folder → everything under it (path filter)
-	 * - note or hub with a `projekt: "#X"` frontmatter → its project (tag X),
-	 *   the note highlighted — the same scope a hub's own aggregator uses
-	 * - note under 03_PROJEKTPLANERING/<CTX>/<PROJ>/ without `projekt`, or that
-	 *   project folder itself → the folder plus tag PROJ (notes elsewhere that
-	 *   carry `#PROJ` or `projekt: "#PROJ"`), the note highlighted
-	 * - any other note → the note and its linked neighbours, highlighted
+	 * fork: what to show for a folder / hub / note — the rules live in src/fork/scope.js
+	 * (pure, tested with `node tests/scope.test.mjs`) on top of the vault's tree contract.
+	 * Returns null while the vault has no contract file.
 	 */
-	scopeFor(file: TAbstractFile): { filters: Filter[]; neighbors: boolean; focusId: string | null } {
-		// a project folder's notes plus every note tagged with (or naming, via
-		// `projekt`) the project elsewhere — e.g. clippings; filters are OR-ed
-		const projectScope = (folder: string, project: string): Filter[] => [
-			{ type: "path", value: folder, enabled: true },
-			{ type: "tag", value: project.normalize("NFC"), enabled: true },
-		];
-		if (file instanceof TFolder) {
-			const pm = /^03_PROJEKTPLANERING\/[^/]+\/([^/]+)$/.exec(file.path);
-			if (pm) return { filters: projectScope(`${file.path}/`, pm[1]), neighbors: false, focusId: null };
-			return { filters: [{ type: "path", value: `${file.path}/`, enabled: true }], neighbors: false, focusId: null };
+	async scopeFor(file: TAbstractFile): Promise<{ filters: Filter[]; neighbors: boolean; focusId: string | null } | null> {
+		this.forkContract = this.forkContract ?? await this.readForkContract();
+		if (!this.forkContract) {
+			new Notice("vault-struktur.json saknas — väntar på omstruktureringen");
+			return null;
 		}
-		const fm = this.app.metadataCache.getFileCache(file as TFile)?.frontmatter;
-		const projekt = String(fm?.projekt ?? "").trim().replace(/^#/, "");
-		if (projekt) {
-			return { filters: [{ type: "tag", value: projekt, enabled: true }], neighbors: false, focusId: file.path };
+		const listDir = (rel: string): VaultStruktur.DirEntry[] | null => {
+			const f = rel ? this.app.vault.getAbstractFileByPath(rel) : this.app.vault.getRoot();
+			return f instanceof TFolder ? f.children.map((c) => ({ name: c.name, dir: c instanceof TFolder })) : null;
+		};
+		let vs: VaultStruktur.Struktur;
+		try {
+			vs = VaultStruktur.from_config(this.forkContract, listDir);
+		} catch (e) {
+			new Notice(e instanceof Error ? e.message : String(e));
+			return null;
 		}
-		const m = /^(03_PROJEKTPLANERING\/[^/]+\/([^/]+)\/)/.exec(file.path);
-		if (m) return { filters: projectScope(m[1], m[2]), neighbors: false, focusId: file.path };
-		return { filters: [{ type: "path", value: file.path, enabled: true }], neighbors: true, focusId: file.path };
+		const isFolder = file instanceof TFolder;
+		const fm = isFolder ? undefined : this.app.metadataCache.getFileCache(file as TFile)?.frontmatter;
+		const r = scopeFilters(file.path, isFolder, String(fm?.projekt ?? ""), vs);
+		return { filters: r.filters as Filter[], neighbors: r.neighbors, focusId: r.focusPath };
 	}
 
 	async showInGraph(file: TAbstractFile) {
+		const scope = await this.scopeFor(file);
+		if (!scope) return;
 		await this.activateView();
 		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH)[0];
-		if (leaf?.view instanceof Graph3DView) await leaf.view.showScope(this.scopeFor(file));
+		if (leaf?.view instanceof Graph3DView) await leaf.view.showScope(scope);
 	}
 
 	triggerLiveUpdate() {
