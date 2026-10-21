@@ -2,7 +2,7 @@
 
 A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Aryan Gupta, with fixes and extra ways to present your vault. Everything from the original works the same; this fork adds what's listed below.
 
-> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.17 · **based on:** 2.8.1
+> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.18 · **based on:** 2.8.1
 > It has its own id on purpose: a community-store update of the original can never overwrite it.
 
 ## What this fork adds
@@ -37,6 +37,12 @@ A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Ar
 | 🐞 | **Zoom to fit works** | Fixed: the ↻ button, and the camera fit after opening a folder or switching the timeline, did nothing — the library measured its own node objects, which this plugin hides and never moves. The fork frames the notes' real positions, keeping your viewing direction. |
 | 🗂 | **Follows the vault's tree contract** | *Open in 3D graph* reads the vault's tree from `.obsidian/vault-struktur.json` (areas `01_HEM/`, `02_PROJEKT/`, `03_RISE/`, an `_archive/` per kontext) through the vendored library `src/fork/vault_struktur.js`; the rules sit in the pure `src/fork/scope.js` (`node tests/scope.test.mjs`). Archived projects and archived kontexts open exactly like active ones. Without the contract file the command shows a notice and does nothing. |
 | 🎯 | **Open a folder, hub or note in the graph** | Right-click a folder or note in the file list → **Open in 3D graph**, or press **⌘⇧G** for the note you're in. A folder shows everything inside it; a note or hub shows its **project** with the note **highlighted** (larger, highlight colour) and the camera on it — so you see where it sits in the structure. |
+| 🔎 | **Property filters** | Filters (*Settings → Filters*, or the graph's ⚙ panel) now also take **Property** (`key=a\|b`, the same rule as the colour groups' `prop:`: key case-insensitive, list values count per item, `key` alone = "is set") and the negated forms **Not path / Not tag / Not property**. A node must match one of the positive filters; a *Not …* filter then removes what it matches — `prop: typ=analog anteckning` + `!prop: sidtyp=tom` = analog notes except the empty pages. Only *Not …* filters = everything except those. |
+| 🗒 | **Analog notes in 3D** | Command **Visa analoga anteckningar i 3D** (`open-analog`): shows the notes with `typ: analog anteckning` (empty pages left out) on the timeline as thumbnails, with the docked preview on — your other settings stay. The note-ingest hub's *3D-graf* link runs it. |
+| 🧩 | **`3d-graf` code block** | Put a button for any scope in a note: ` ```3d-graf ` with lines `filter: <path:/tag:/prop:/!prop: …>` (one or more), `tidslinje: på`, `miniatyrer: på` (thumbnails + docked preview), `grannar: på\|av` (linked neighbours, default på) and `knapp: <label>`. The button opens the graph with that scope. Example below. |
+| 🖼 | **Thumbnails** | *Switch panel → Thumbnails* / *Settings → Thumbnails*. A note whose frontmatter key (default `bild`, list in *Image keys*) links an image, and image attachments, are drawn as a **camera-facing picture card** instead of a sphere: the card has the scan's proportions, a frame in the node's colour, and lights up when hovered. Far away it fades to a flat paper tone instead of shimmering. Pictures are made at runtime from the vault's files — nearest to the camera first, a few per frame — and cached in IndexedDB (keyed by path + modified time + size, oldest dropped at 20 000), so new scans get thumbnails without any step and the next opening is quick. Cards that overlap are pushed apart sideways like labels. *Thumbnail size* (world units), *Labels on thumbnails* (off), *Thumbnail memory* (GPU atlas pages, 16 MB each, 690 cards per page; default 7 ≈ 117 MB holds ~4 800 cards; beyond that the farthest wait). |
+| 🔍 | **Click a thumbnail to enlarge it** | A click opens a **lightbox** over the graph with the whole scan: **wheel** zooms around the cursor, **drag** pans, **←/→** go to the previous/next scan in timeline order, **Esc** or a click outside the picture closes, **Öppna anteckning** opens the note (⌘-click on the node opens the note straight away). Other nodes click as before. |
+| 📌 | **Docked preview** | *Switch panel → Hover preview → Docked* / *Settings → Interaction → Hover preview*: instead of Obsidian's popover, a panel in the view's **lower-right corner** follows the pointer (80 ms delay) and keeps the last note when the pointer leaves. A scan shows as the picture + one line (*date · collection · s. page*), any other note is rendered (no properties). **Pin** freezes it on the current note, **fold** shrinks it to its header (remembered), the grip at the upper-left corner **resizes** it. Default **500×680 px**, never more than 45 % of the view's width or 80 % of its height (re-fitted when the view is resized); the size is saved. Click it to enlarge the scan or open the note. |
 
 ### Keyboard shortcuts
 
@@ -97,6 +103,20 @@ clipping: "#d6d8db"
 
 Meeting todos (`#röd` + a date) are red through *Settings → Meetings → Meeting color*, not through a group.
 
+### Example: a `3d-graf` button
+
+````markdown
+```3d-graf
+filter: prop: typ=analog anteckning
+filter: !prop: sidtyp=tom
+tidslinje: på
+miniatyrer: på
+knapp: Visa analoga anteckningar
+```
+````
+
+Other hubs: `filter: tag: STOPP` + `knapp: STOPP i 3D` is enough. Lines it doesn't understand are listed under the button.
+
 ### How a note's date is found (timeline + storyline)
 
 1. a `YYYYMMDD` / `YYYYMMDDHHmmss` prefix in the file name,
@@ -128,6 +148,10 @@ Tags have no date and aren't pulled; attachments are pulled but not part of the 
 | *Changed defaults:* Center force · Repel force · Label distance | Settings → Forces / Labels | 0.02 · 20 · 300 (were 0.1 · 10 · 150) |
 | Timeline layout · Newest at the top · Timeline strength · Timeline length · Storyline | graph view ⚙ → *Timeline* (length also as *Height* in the switch panel) | off · off · 0.08 · 600 · off |
 | 2D mode · Two-finger drag pans · Time grid | graph view ⚙ → *Timeline* | off · on · Off |
+| Thumbnails · Image keys · Thumbnail size · Labels on thumbnails · Thumbnail memory | Settings → Thumbnails, switch panel (*Thumbnails*) | off · `bild` · 14 · off · 7 pages |
+| Hover preview (*Popover* / *Docked*) | Settings → Interaction, switch panel | Popover |
+| Docked preview size · folded | the panel's grip / header button | 500×680 · open |
+| Filter types *Property*, *Not path / tag / property* | Settings → Filters, graph ⚙ → *Advanced Filters* | — |
 | Meeting todos as events · Meeting tag · Meeting color | Settings → Meetings | on · `röd` · red `#d32a32` |
 
 ## Install
@@ -153,7 +177,7 @@ npx tsc -noEmit -skipLibCheck && node esbuild.config.mjs production
 
 The Rust/WASM physics engine is prebuilt in `src/physics/wasm-data.ts`; `wasm-pack` (`npm run build`) is only needed when changing `crates/`.
 
-Fork changes, by file: label fix, label formatting and line wrapping (`labelLines`), mask atlas + per-label colour/tint and far → near draw order (`setNodeColors`, `setStyle`, `updateVisibilityAndOcclusion`) in `src/rendering/label-renderer.ts`; the switch panel component in `src/ui/flip-switch.ts`; physics tick / settle-stop (`onPhysicsTick`, `wakePhysics`), time-grid hover (`pickGridStop`, `setHoveredGridStop`) and the switch panel (`buildSwitchPanel`) in `src/view.ts`; page preview, timeline, storyline, time grid (`buildTimelineGrid`, `updateTimelineGrid`), 2D mode (`toggleFlat2D`), presentation switch and the focus highlight (`showScope`, `flyToNode`) in `src/view.ts`; new settings in `src/types.ts` / `src/settings.ts`; hover source, commands, hotkeys, the file-menu item and the folder/hub/note scope (`scopeFor`) in `main.ts`. Live-testing helpers for developers: `scripts/dev/`.
+Fork changes, by file: the analog view (property filters `filterPredicate`/`parseProp`, the `3d-graf` block, atlas slots, load order, quad picking, lightbox and dock maths — pure, `node tests/analog.test.mjs`) in `src/fork/analog.js`; thumbnail quads, atlas and loader in `src/rendering/thumbnail-renderer.ts`, the IndexedDB cache in `src/rendering/thumbnail-cache.ts`, the lightbox in `src/ui/lightbox.ts`, the docked preview in `src/ui/docked-preview.ts` (wired in `view.ts`: `rebuildThumbnails`, `imageFileOf`, `dockContentFor`; benchmark: `scripts/dev/thumbs-bench.ts`); label fix, label formatting and line wrapping (`labelLines`), mask atlas + per-label colour/tint and far → near draw order (`setNodeColors`, `setStyle`, `updateVisibilityAndOcclusion`) in `src/rendering/label-renderer.ts`; the switch panel component in `src/ui/flip-switch.ts`; physics tick / settle-stop (`onPhysicsTick`, `wakePhysics`), time-grid hover (`pickGridStop`, `setHoveredGridStop`) and the switch panel (`buildSwitchPanel`) in `src/view.ts`; page preview, timeline, storyline, time grid (`buildTimelineGrid`, `updateTimelineGrid`), 2D mode (`toggleFlat2D`), presentation switch and the focus highlight (`showScope`, `flyToNode`) in `src/view.ts`; new settings in `src/types.ts` / `src/settings.ts`; hover source, commands, hotkeys, the file-menu item and the folder/hub/note scope (`scopeFor`) in `main.ts`. Live-testing helpers for developers: `scripts/dev/`.
 
 ---
 

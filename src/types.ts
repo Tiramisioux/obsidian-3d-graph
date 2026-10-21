@@ -6,9 +6,29 @@ export interface ColorGroup {
 }
 
 export interface Filter {
-  type: "path" | "tag";
+  /** fork: `prop` = frontmatter property, `key=a|b` like the colour groups' `prop:` */
+  type: "path" | "tag" | "prop";
   value: string;
   enabled: boolean;
+  /** fork: exclude what matches (positive filters are OR-ed, negated ones subtract) */
+  negate?: boolean;
+}
+
+/** fork: what the filter dropdowns offer (negated = exclude) */
+export type FilterKind = "path" | "tag" | "prop" | "!path" | "!tag" | "!prop";
+export const FILTER_KINDS: [FilterKind, string][] = [
+  ["path", "Path"],
+  ["tag", "Tag"],
+  ["prop", "Property (key=a|b)"],
+  ["!path", "Not path"],
+  ["!tag", "Not tag"],
+  ["!prop", "Not property"],
+];
+export const filterKindOf = (f: Filter): FilterKind => (f.negate ? (`!${f.type}` as FilterKind) : f.type);
+export function setFilterKind(f: Filter, kind: FilterKind) {
+  f.type = kind.replace("!", "") as Filter["type"];
+  if (kind.startsWith("!")) f.negate = true;
+  else delete f.negate;
 }
 
 export enum NodeShape {
@@ -94,6 +114,24 @@ export interface Graph3DPluginSettings {
   flat2D: boolean;
   /** fork: trackpad two-finger drag pans the view (pinch still zooms) */
   trackpadPan: boolean;
+  /** fork: notes with an image in frontmatter (`thumbnailKeys`) or image attachments
+   *  are drawn as camera-facing thumbnails instead of spheres */
+  thumbnails: boolean;
+  /** fork: frontmatter keys that hold the image link (`bild: "[[x.jpg]]"`) */
+  thumbnailKeys: string[];
+  /** fork: thumbnail height in world units */
+  thumbnailSize: number;
+  /** fork: keep the labels of thumbnail nodes */
+  thumbnailLabels: boolean;
+  /** fork: GPU atlas pages (2048², 16 MiB each) thumbnails may use */
+  thumbnailMaxPages: number;
+  /** fork: hover preview as an Obsidian popover, or docked in the lower right */
+  hoverPreviewMode: "popover" | "docked";
+  /** fork: docked preview size (px), saved when resized */
+  dockedPreviewWidth: number;
+  dockedPreviewHeight: number;
+  /** fork: docked preview folded to its header */
+  dockedPreviewCollapsed: boolean;
   /** fork: dated `#<eventTag>` todos become nodes of their own, at their due date */
   showEvents: boolean;
   /** fork: show the node of the tag the graph is filtered on (a project
@@ -178,6 +216,15 @@ export const DEFAULT_SETTINGS: Graph3DPluginSettings = {
   showEvents: true,
   showScopeTag: false,
   showPeople: false,
+  thumbnails: false,
+  thumbnailKeys: ["bild"],
+  thumbnailSize: 14,
+  thumbnailLabels: false,
+  thumbnailMaxPages: 7,
+  hoverPreviewMode: "popover",
+  dockedPreviewWidth: 500,
+  dockedPreviewHeight: 680,
+  dockedPreviewCollapsed: false,
   eventTag: "röd",
   colorEvent: "#d32a32",
   useKeyboardControls: true,

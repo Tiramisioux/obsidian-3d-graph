@@ -1,6 +1,6 @@
 import { type App, debounce, PluginSettingTab, Setting } from "obsidian";
 import type Graph3DPlugin from "../main";
-import { NodeShape } from "./types";
+import { FILTER_KINDS, filterKindOf, type FilterKind, NodeShape, setFilterKind } from "./types";
 import { Graph3DView, VIEW_TYPE_3D_GRAPH } from "./view";
 
 export class Graph3DSettingsTab extends PluginSettingTab {
@@ -84,26 +84,23 @@ export class Graph3DSettingsTab extends PluginSettingTab {
       );
 
     containerEl.createEl("p", {
-      text: "Use the filters below to limit the number of nodes in the graph. Filters are applied in order.",
+      text: "Use the filters below to limit the number of nodes in the graph. A node must match one of the positive filters (path, tag, property); a \"Not …\" filter removes what it matches (e.g. Not property: sidtyp=tom). Property filters take key=a|b like the colour groups' prop:.",
       cls: "setting-item-description",
     });
 
     this.plugin.settings.filters.forEach((filter, index) => {
       const setting = new Setting(containerEl)
-        .addDropdown((dropdown) =>
-          dropdown
-            .addOption("path", "Path")
-            .addOption("tag", "Tag")
-            .setValue(filter.type)
-            .onChange(async (value: string) => {
-              filter.type = value as "path" | "tag";
-              await this.plugin.saveSettings();
-              this.triggerUpdate({
-                redrawData: true,
-                useCache: true,
-              });
-            }),
-        )
+        .addDropdown((dropdown) => {
+          for (const [k, label] of FILTER_KINDS) dropdown.addOption(k, label);
+          dropdown.setValue(filterKindOf(filter)).onChange(async (value: string) => {
+            setFilterKind(filter, value as FilterKind);
+            await this.plugin.saveSettings();
+            this.triggerUpdate({
+              redrawData: true,
+              useCache: true,
+            });
+          });
+        })
         .addText((text) =>
           text
             .setPlaceholder("Enter filter value...")
@@ -617,6 +614,64 @@ export class Graph3DSettingsTab extends PluginSettingTab {
       }),
     );
 
+    new Setting(containerEl).setName("Thumbnails").setHeading();
+    new Setting(containerEl)
+      .setName("Thumbnails")
+      .setDesc("Draw notes that have a scan (frontmatter key below) and image attachments as thumbnails instead of spheres. Click one to enlarge it (⌘-click opens the note).")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.thumbnails).onChange(async (value) => {
+          this.plugin.settings.thumbnails = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+    new Setting(containerEl)
+      .setName("Image keys")
+      .setDesc("Frontmatter keys that hold the image link, comma separated (the first that resolves to an image wins).")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.thumbnailKeys.join(", ")).onChange(
+          debounce(
+            async (value) => {
+              this.plugin.settings.thumbnailKeys = value.split(",").map((k) => k.trim()).filter(Boolean);
+              await this.plugin.saveSettings();
+            },
+            600,
+            true,
+          ),
+        ),
+      );
+    new Setting(containerEl).setName("Thumbnail size").setDesc("Height in world units.").addSlider((s) =>
+      s
+        .setLimits(4, 40, 1)
+        .setValue(this.plugin.settings.thumbnailSize)
+        .setDynamicTooltip()
+        .onChange(async (v) => {
+          this.plugin.settings.thumbnailSize = v;
+          await this.plugin.saveSettings();
+        }),
+    );
+    new Setting(containerEl)
+      .setName("Labels on thumbnails")
+      .setDesc("Keep the file-name label above each thumbnail.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.thumbnailLabels).onChange(async (value) => {
+          this.plugin.settings.thumbnailLabels = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+    new Setting(containerEl)
+      .setName("Thumbnail memory")
+      .setDesc("GPU atlas pages (16 MB each, 690 thumbnails per page). When there are more thumbnails than fit, the ones farthest from the camera wait.")
+      .addSlider((s) =>
+        s
+          .setLimits(1, 8, 1)
+          .setValue(this.plugin.settings.thumbnailMaxPages)
+          .setDynamicTooltip()
+          .onChange(async (v) => {
+            this.plugin.settings.thumbnailMaxPages = v;
+            await this.plugin.saveSettings();
+          }),
+      );
+
     new Setting(containerEl).setName("Interaction").setHeading();
     new Setting(containerEl)
       .setName("Page preview on hover")
@@ -635,6 +690,19 @@ export class Graph3DSettingsTab extends PluginSettingTab {
           this.plugin.settings.hoverPreviewProperties = value;
           await this.plugin.saveSettings();
         }),
+      );
+    new Setting(containerEl)
+      .setName("Hover preview")
+      .setDesc("Popover: Obsidian's page preview next to the pointer. Docked: a panel in the lower-right corner that follows the pointer and keeps the last note (pin, fold and resize it).")
+      .addDropdown((dd) =>
+        dd
+          .addOption("popover", "Popover")
+          .addOption("docked", "Docked (lower right)")
+          .setValue(this.plugin.settings.hoverPreviewMode)
+          .onChange(async (value) => {
+            this.plugin.settings.hoverPreviewMode = value as "popover" | "docked";
+            await this.plugin.saveSettings();
+          }),
       );
     new Setting(containerEl)
       .setName("Use Keyboard Controls (WASD)")

@@ -14,11 +14,20 @@ import type Graph3DPlugin from "../main";
 import { PhysicsBridge } from "./physics/physics-bridge";
 import { createWorkerBlobUrl, getWasmArrayBuffer } from "./physics/wasm-loader";
 import { InstancedGraphRenderer } from "./rendering/graph-renderer";
-import { colorToRgb01, InstancedLabelRenderer, labelStyleFrom } from "./rendering/label-renderer";
+import { colorToRgb01, formatLabel, InstancedLabelRenderer, labelStyleFrom } from "./rendering/label-renderer";
+import { ThumbnailRenderer, type ThumbSource } from "./rendering/thumbnail-renderer";
+import { ThumbnailCache } from "./rendering/thumbnail-cache";
 import { SwitchPanel } from "./ui/flip-switch";
+import { Lightbox } from "./ui/lightbox";
+import { DockedPreview, type DockContent } from "./ui/docked-preview";
+import * as A from "./fork/analog";
 import {
   ColorGroup,
   type Filter,
+  FILTER_KINDS,
+  filterKindOf,
+  type FilterKind,
+  setFilterKind,
   type Graph3DPluginSettings,
   type GraphLink,
   type GraphNode,
@@ -84,6 +93,16 @@ export class Graph3DView extends ItemView {
 
   private instancedRenderer: InstancedGraphRenderer | null = null;
   private labelRenderer: InstancedLabelRenderer | null = null;
+  // fork: thumbnails (WP-G)
+  private thumbRenderer: ThumbnailRenderer | null = null;
+  private thumbCache: ThumbnailCache | null = null;
+  private lightbox: Lightbox | null = null;
+  private dock: DockedPreview | null = null;
+  /** image file of a note/attachment node, keyed by node id and the note's mtime */
+  private imageFileCache = new Map<string, { mtime: number; keys: string; file: TFile | null }>();
+  private thumbSig = "";
+  private thumbBoxes = new Float32Array(0);
+  private lightboxIds: string[] | null = null;
   private currentPositions: Float32Array = new Float32Array(0);
   private currentNodes: GraphNode[] = [];
   private currentLinks: GraphLink[] = [];
@@ -261,6 +280,7 @@ export class Graph3DView extends ItemView {
 
     this.addLocalControls();
     this.initializeGraph();
+    this.buildAnalogUi();
 
     const debouncedResize = debounce(
       () => {
@@ -498,6 +518,23 @@ export class Graph3DView extends ItemView {
       tooltip: "Obsidian's page preview when hovering a note",
     });
     panel.addSwitch({
+      label: "Thumbnails",
+      get: () => st.thumbnails,
+      set: async (v) => { st.thumbnails = v; await save(); },
+      tooltip: "Notes with a scan (bild: …) as thumbnails instead of spheres; click one to enlarge it",
+    });
+    panel.addSegmented({
+      label: "Hover preview",
+      options: [
+        { value: "popover", label: "Popover", tooltip: "Obsidian's page preview next to the pointer" },
+        { value: "docked", label: "Docked", tooltip: "A panel in the lower-right corner that follows the pointer" },
+      ],
+      get: () => st.hoverPreviewMode,
+      set: async (v) => { this.endHoverPreview(); st.hoverPreviewMode = v; await save(); },
+      tooltip: "Where the hover preview appears",
+      disabled: () => !st.hoverPreview,
+    });
+    panel.addSwitch({
       label: "Trackpad pan",
       get: () => st.trackpadPan,
       set: async (v) => { st.trackpadPan = v; await save(); },
@@ -509,6 +546,8 @@ export class Graph3DView extends ItemView {
    *  switches show the live state, and settled physics wakes up again */
   public onSettingsSaved() {
     this.switchPanel?.refresh();
+    this.applyThumbnailSettings(); // fork
+    this.applyDockVisibility(); // fork
     this.wakePhysics();
   }
 
@@ -561,16 +600,14 @@ export class Graph3DView extends ItemView {
 
     this.settings.filters.forEach((filter, index) => {
       const setting = new Setting(container)
-        .addDropdown((dropdown) =>
-          dropdown
-            .addOption("path", "Path")
-            .addOption("tag", "Tag")
-            .onChange(async (value: string) => {
-              filter.type = value as "path" | "tag";
-              await this.plugin.saveSettings();
-              this.updateData({ useCache: true });
-            }),
-        )
+        .addDropdown((dropdown) => {
+          for (const [k, label] of FILTER_KINDS) dropdown.addOption(k, label);
+          dropdown.setValue(filterKindOf(filter)).onChange(async (value: string) => {
+            setFilterKind(filter, value as FilterKind);
+            await this.plugin.saveSettings();
+            this.updateData({ useCache: true });
+          });
+        })
         .addText((text) =>
           text
             .setPlaceholder("Enter filter value...")
@@ -976,7 +1013,9 @@ export class Graph3DView extends ItemView {
   private separateLabels(positions: Float32Array): boolean {
     const k = this.settings.labelSeparation;
     const lr = this.labelRenderer;
-    if (!(k > 0) || !lr || !this.settings.showNodeLabels || this.settings.showLabelsOnHoverOnly) return false;
+    const thumbs = !!this.thumbRenderer?.count; // fork: thumbnail cards need room too
+    if (!(k > 0) || !lr || (!thumbs && (!this.settings.showNodeLabels || this.settings.showLabelsOnHoverOnly))) return false;
+    if (thumbs) this.syncThumbBoxes();
     const box = lr.labelBoxes();
     const n = Math.min(box.length / 3, positions.length / 4);
     if (n < 2) return false;
@@ -1247,6 +1286,192 @@ export class Graph3DView extends ItemView {
     });
     const hovered = this.hoveredNode ? (this.nodeIdToIndex.get(this.hoveredNode.id) ?? null) : null;
     this.labelRenderer?.setHighlightedNode(hovered, partial);
+    this.thumbRenderer?.setHighlighted(hovered, partial); // fork
+  }
+
+  // ---- fork: analog view — thumbnails, lightbox, docked preview (WP-G) -------------------
+
+  private buildAnalogUi() {
+    this.lightbox = new Lightbox(this.contentEl, {
+      ids: () => this.lightboxOrder(),
+      resolve: (id) => this.lightboxItem(id),
+      openNote: (id) => this.openNoteById(id),
+    });
+    this.dock = new DockedPreview(this.contentEl, this.app, {
+      size: () => ({ w: this.settings.dockedPreviewWidth, h: this.settings.dockedPreviewHeight }),
+      saveSize: (w, h) => {
+        this.settings.dockedPreviewWidth = w;
+        this.settings.dockedPreviewHeight = h;
+        void this.plugin.saveSettings();
+      },
+      collapsed: () => this.settings.dockedPreviewCollapsed,
+      setCollapsed: (c) => {
+        this.settings.dockedPreviewCollapsed = c;
+        void this.plugin.saveSettings();
+      },
+      activate: (c) => {
+        const node = this.nodeMap.get(c.id);
+        if (c.kind === "scan" && node && this.imageFileOf(node)) this.openLightbox(c.id);
+        else this.openNoteById(c.id);
+      },
+    });
+    this.applyDockVisibility();
+  }
+
+  private applyDockVisibility() {
+    this.dock?.setVisible(this.settings.hoverPreviewMode === "docked" && this.settings.hoverPreview);
+  }
+
+  /** the image file a note (frontmatter key in `thumbnailKeys`) or an image attachment shows */
+  private imageFileOf(node: GraphNode): TFile | null {
+    const f = this.app.vault.getAbstractFileByPath(node.id);
+    if (!(f instanceof TFile)) return null;
+    if (node.type === NodeType.Attachment) return A.isImagePath(f.path) ? f : null;
+    if (node.type !== NodeType.File) return null;
+    const keys = this.settings.thumbnailKeys.join("|");
+    const c = this.imageFileCache.get(node.id);
+    if (c && c.mtime === f.stat.mtime && c.keys === keys) return c.file;
+    const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
+    for (const link of A.imageLinkCandidates(fm, this.settings.thumbnailKeys)) {
+      if (!A.isImagePath(link)) continue;
+      const dest = this.app.metadataCache.getFirstLinkpathDest(link, f.path);
+      if (dest) {
+        this.imageFileCache.set(node.id, { mtime: f.stat.mtime, keys, file: dest });
+        return dest;
+      }
+    }
+    return null; // not cached: the scan may be linked or indexed later
+  }
+
+  private isThumbNode(node: GraphNode): boolean {
+    const i = this.nodeIdToIndex.get(node.id);
+    return i !== undefined && !!this.thumbRenderer?.hasThumb(i);
+  }
+
+  private thumbHeightApplied = 0;
+
+  /** (re)build the thumbnail quads for the current nodes, or tear them down when the setting is off */
+  private rebuildThumbnails() {
+    const tr = this.thumbRenderer;
+    if (!tr) return;
+    const st = this.settings;
+    this.lightboxIds = null;
+    this.thumbSig = JSON.stringify([st.thumbnails, st.thumbnailKeys, st.thumbnailLabels, st.thumbnailMaxPages]);
+    this.thumbHeightApplied = st.thumbnailSize;
+    const nodes = this.currentNodes;
+    if (!st.thumbnails || !nodes.length) {
+      tr.clear();
+      this.instancedRenderer?.setHiddenNodes(null);
+      this.labelRenderer?.setSuppressed(null);
+      this.labelRenderer?.setBoxOverride(null);
+      this.labelRenderer?.setExtraLift(null);
+      return;
+    }
+    const items: ThumbSource[] = [];
+    const hidden = new Uint8Array(nodes.length);
+    nodes.forEach((n, i) => {
+      const f = this.imageFileOf(n);
+      if (!f) return;
+      items.push({ nodeIndex: i, path: f.path, mtime: f.stat.mtime, size: f.stat.size });
+      hidden[i] = 1;
+    });
+    tr.init(items, nodes.length, st.thumbnailSize, st.thumbnailMaxPages);
+    this.instancedRenderer?.setHiddenNodes(items.length ? hidden : null);
+    this.labelRenderer?.setSuppressed(items.length && !st.thumbnailLabels ? hidden : null);
+    this.thumbBoxes = new Float32Array(nodes.length * 3);
+    this.labelRenderer?.setBoxOverride(items.length ? this.thumbBoxes : null);
+    if (items.length && st.thumbnailLabels) {
+      const lift = new Float32Array(nodes.length);
+      for (const it of items) lift[it.nodeIndex] = st.thumbnailSize / 2 + 1;
+      this.labelRenderer?.setExtraLift(lift);
+    } else this.labelRenderer?.setExtraLift(null);
+    if (this.currentPositions.length) tr.setPositions(this.currentPositions);
+    this.syncThumbBoxes();
+    this.refreshLabelHighlights();
+  }
+
+  /** a settings change (switch, command, settings tab): rebuild or resize only when it concerns thumbnails */
+  private applyThumbnailSettings() {
+    if (!this.isGraphInitialized || !this.thumbRenderer) return;
+    const st = this.settings;
+    const sig = JSON.stringify([st.thumbnails, st.thumbnailKeys, st.thumbnailLabels, st.thumbnailMaxPages]);
+    if (sig !== this.thumbSig) {
+      this.rebuildThumbnails();
+      this.updateColors();
+      this.updateLabels();
+    } else if (st.thumbnailSize !== this.thumbHeightApplied && this.thumbRenderer.count) {
+      this.thumbHeightApplied = st.thumbnailSize;
+      this.thumbRenderer.setHeight(st.thumbnailSize);
+      this.syncThumbBoxes();
+    }
+  }
+
+  /** the thumbnails' sizes into the label renderer's box list (the separation pass keeps them apart) */
+  private syncThumbBoxes() {
+    const tr = this.thumbRenderer;
+    if (!tr?.count || this.thumbBoxes.length !== this.currentNodes.length * 3) return;
+    tr.fillBoxes(this.thumbBoxes);
+  }
+
+  /** ids of the nodes with a scan in timeline order (the lightbox's ←/→ order) */
+  private lightboxOrder(): string[] {
+    if (this.lightboxIds) return this.lightboxIds;
+    const rows: { id: string; t: number; name: string }[] = [];
+    for (const n of this.currentNodes) {
+      if (!this.imageFileOf(n)) continue;
+      rows.push({ id: n.id, t: this.nodeDate(n) ?? Infinity, name: n.name });
+    }
+    rows.sort((a, b) => (a.t === b.t ? a.name.localeCompare(b.name) : a.t < b.t ? -1 : 1));
+    this.lightboxIds = rows.map((r) => r.id);
+    return this.lightboxIds;
+  }
+
+  /** "2022-02-18 · Kollegieblock A4 · s. 25" */
+  private captionFor(node: GraphNode, img: TFile): string {
+    if (node.type !== NodeType.File) return img.name;
+    const f = this.app.vault.getAbstractFileByPath(node.id);
+    const fm = f instanceof TFile ? this.app.metadataCache.getFileCache(f)?.frontmatter : undefined;
+    const t = this.nodeDate(node);
+    const parts = [
+      t !== null ? new Date(t).toLocaleDateString("sv-SE") : "",
+      fm?.samling ? A.collectionName(fm.samling) : "",
+      fm?.sida !== undefined && fm?.sida !== null && fm?.sida !== "" ? `s. ${fm.sida}` : "",
+    ].filter(Boolean);
+    return parts.length ? parts.join(" · ") : formatLabel(node.name, this.settings);
+  }
+
+  private lightboxItem(id: string) {
+    const node = this.nodeMap.get(id);
+    const img = node ? this.imageFileOf(node) : null;
+    if (!node || !img) return null;
+    return { id, imageUrl: this.app.vault.getResourcePath(img), caption: this.captionFor(node, img) };
+  }
+
+  private openLightbox(id: string) {
+    this.endHoverPreview();
+    this.lightbox?.open(id);
+  }
+
+  private openNoteById(id: string) {
+    const node = this.nodeMap.get(id);
+    const path = node?.type === NodeType.Event ? node.sourcePath! : id;
+    const f = this.app.vault.getAbstractFileByPath(path);
+    if (f instanceof TFile) {
+      this.lightbox?.close();
+      void this.app.workspace.getLeaf("tab").openFile(f);
+    }
+  }
+
+  /** what the docked preview shows for a hovered node: its scan + one line, else the rendered note */
+  private dockContentFor(node: GraphNode): DockContent | null {
+    if (node.type === NodeType.Event && node.sourcePath) {
+      return { kind: "note", id: node.sourcePath, title: formatLabel(node.sourcePath.split("/").pop()!.replace(/\.md$/, ""), this.settings), path: node.sourcePath };
+    }
+    if (node.type !== NodeType.File && node.type !== NodeType.Attachment) return null;
+    const img = this.imageFileOf(node);
+    const title = formatLabel(node.name, this.settings);
+    if (img) return { kind: "scan", id: node.id, title, imageUrl: this.app.vault.getResourcePath(img), line: this.captionFor(node, img) };
+    return node.type === NodeType.File ? { kind: "note", id: node.id, title, path: node.id } : null;
   }
 
   // ---- fork: "Open in 3D graph" scope + focused source note -------------
@@ -1256,10 +1481,23 @@ export class Graph3DView extends ItemView {
 
   /** show a scope (filters) and optionally focus one note: highlight it and
    *  fly the camera to it once the layout has settled */
-  public async showScope(scope: { filters: Filter[]; neighbors: boolean; focusId: string | null }) {
+  public async showScope(scope: {
+    filters: Filter[];
+    neighbors: boolean;
+    focusId: string | null;
+    /** fork (analog view): switch these on together with the scope; unset = leave the user's setting */
+    options?: { timeline?: boolean; thumbnails?: boolean; docked?: boolean };
+  }) {
     this.settings.filters = scope.filters;
     this.settings.showNeighboringNodes = scope.neighbors;
     this.focusNodeId = scope.focusId;
+    const o = scope.options;
+    if (o?.timeline !== undefined) this.settings.timelineLayout = o.timeline;
+    if (o?.thumbnails !== undefined) this.settings.thumbnails = o.thumbnails;
+    if (o?.docked) {
+      this.settings.hoverPreviewMode = "docked";
+      this.settings.hoverPreview = true;
+    }
     await this.plugin.saveSettings();
     // a freshly opened view initialises asynchronously — wait for it (max ~5 s)
     for (let i = 0; i < 50 && !this.isGraphInitialized; i++) await new Promise((r) => window.setTimeout(r, 100));
@@ -1288,6 +1526,11 @@ export class Graph3DView extends ItemView {
   /** fork: node under the current raycaster ray — its sphere, else its label */
   private pickNodeIndex(): number | null {
     if (!this.instancedRenderer) return null;
+    // fork: a thumbnail quad counts as its node (checked first: the quads are the big targets)
+    if (this.thumbRenderer?.count && this.graph) {
+      const q = this.thumbRenderer.pick(this.raycaster, this.graph.camera());
+      if (q !== null) return q;
+    }
     const hit = this.instancedRenderer.getNodeIndexAtRay(this.raycaster, this.currentPositions);
     if (hit !== null) return hit;
     if (!this.settings.showNodeLabels || !this.labelRenderer || !this.graph) return null;
@@ -1304,14 +1547,7 @@ export class Graph3DView extends ItemView {
   private frontmatterMatches(path: string, key: string, values: string[]): boolean {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) return false;
-    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-    if (!fm) return false;
-    const k = Object.keys(fm).find((x) => x.toLowerCase() === key);
-    if (k === undefined) return false;
-    const raw = fm[k];
-    const items = (Array.isArray(raw) ? raw : [raw]).map((v) => String(v ?? "").trim().toLowerCase());
-    if (!values.length) return items.some((v) => v !== "");
-    return items.some((v) => values.includes(v));
+    return A.propMatches(this.app.metadataCache.getFileCache(file)?.frontmatter, key, values); // fork: shared with the filters
   }
 
 
@@ -1848,6 +2084,7 @@ export class Graph3DView extends ItemView {
             this.currentPositions[idx * 4 + 2] = planeIntersect.z;
           }
           this.instancedRenderer.updatePositions(this.currentPositions);
+          this.thumbRenderer?.setPositions(this.currentPositions); // fork
           this.syncDragPositionsToWasm(draggedNode);
         }
       } else {
@@ -1931,6 +2168,20 @@ export class Graph3DView extends ItemView {
       const scene = this.graph.scene();
       this.instancedRenderer = new InstancedGraphRenderer(scene);
       this.labelRenderer = new InstancedLabelRenderer(scene);
+      this.thumbCache = new ThumbnailCache();
+      this.thumbRenderer = new ThumbnailRenderer(
+        scene,
+        {
+          renderer: () => (this.graph?.renderer() as THREE.WebGLRenderer | undefined) ?? null,
+          camera: () => (this.graph?.camera() as THREE.Camera | undefined) ?? null,
+          readBinary: async (path) => {
+            const f = this.app.vault.getAbstractFileByPath(path);
+            if (!(f instanceof TFile)) throw new Error("gone: " + path);
+            return this.app.vault.readBinary(f);
+          },
+        },
+        this.thumbCache,
+      );
 
       this.setupPointerInteractions();
       this.setupPanControls();
@@ -2122,6 +2373,7 @@ export class Graph3DView extends ItemView {
           );
           this.labelRenderer?.initLabels(newData.nodes, this.settings, 4);
           this.initTimeline(newData.nodes);
+          this.rebuildThumbnails(); // fork
 
           this.updateForces();
           this.updateDisplay();
@@ -2160,6 +2412,7 @@ export class Graph3DView extends ItemView {
         this.graph.graphData({ nodes: [], links: [] });
         this.instancedRenderer?.clear();
         this.labelRenderer?.clear();
+        this.thumbRenderer?.clear(); // fork
         this.clearStoryline();
         this.currentPositions = new Float32Array(0);
         this.currentNodes = [];
@@ -2202,7 +2455,12 @@ export class Graph3DView extends ItemView {
       this.instancedRenderer.updateNodeColors(colorMap);
       // fork: labels carry their node's colour; theme/settings colours as uniforms
       this.labelRenderer?.setStyle(labelStyleFrom(this.settings, this.highlightColor()));
-      this.labelRenderer?.setNodeColors(this.currentNodes.map((n) => this.getNodeColor(n, true)));
+      const labelColors = this.currentNodes.map((n) => this.getNodeColor(n, true));
+      this.labelRenderer?.setNodeColors(labelColors);
+      if (this.thumbRenderer?.count) { // fork: thumbnail frames in the node colour
+        this.thumbRenderer.setStyle(this.getCssColor("--background-modifier-border", "#9a9a9e"), this.highlightColor());
+        this.thumbRenderer.setNodeColors(labelColors);
+      }
 
       const linkHighlightColor = this.settings.useThemeColors
         ? this.getCssColor("--graph-node-focused", this.settings.colorHighlight)
@@ -2342,15 +2600,8 @@ export class Graph3DView extends ItemView {
           };
         } else if (query.startsWith("prop:")) {
           // fork: frontmatter property — "prop: typ=person", alternatives with | ("prop: typ=email|mail")
-          const body = group.query.substring(5).trim();
-          const eq = body.indexOf("=");
-          return {
-            color: group.color,
-            query,
-            type: "prop" as const,
-            propKey: (eq >= 0 ? body.slice(0, eq) : body).trim().toLowerCase(),
-            propValues: eq >= 0 ? body.slice(eq + 1).split("|").map((v) => v.trim().toLowerCase()).filter(Boolean) : [],
-          };
+          const pp = A.parseProp(group.query.substring(5));
+          return { color: group.color, query, type: "prop" as const, propKey: pp.key, propValues: pp.values };
         } else if (query.startsWith("name:")) {
           // fork: words in the file name, as a case-insensitive regex — "name: möte|meeting"
           const body = group.query.substring(5).trim();
@@ -2539,6 +2790,7 @@ export class Graph3DView extends ItemView {
     this.updateStoryline(pos);
     this.updateTimelineGrid(pos);
     this.instancedRenderer?.updatePositions(pos);
+    this.thumbRenderer?.setPositions(pos); // fork
     if (this.settings.showNodeLabels && !this.settings.performanceMode) {
       this.labelRenderer?.updateVisibilityAndOcclusion(
         this.graph.camera(),
@@ -2646,6 +2898,7 @@ export class Graph3DView extends ItemView {
       if (!this.controlsListenerAdded) {
         let labelUpdatePending = false;
         controls.addEventListener("change", () => {
+          this.thumbRenderer?.wake(); // fork: re-prioritise the thumbnails
           if (!this.settings.showNodeLabels || this.settings.performanceMode) return;
           if (!labelUpdatePending) {
             labelUpdatePending = true;
@@ -2695,6 +2948,12 @@ export class Graph3DView extends ItemView {
       return;
     }
 
+    // fork: a click on a thumbnail enlarges it (⌘-click above opens the note)
+    if (this.isThumbNode(node)) {
+      this.openLightbox(node.id);
+      return;
+    }
+
     if (this.clickTimeout) {
       clearTimeout(this.clickTimeout);
       this.clickTimeout = null;
@@ -2708,6 +2967,7 @@ export class Graph3DView extends ItemView {
   }
 
   private handleNodeDoubleClick(node: GraphNode) {
+    if (this.isThumbNode(node)) return; // fork: the lightbox took the click
     if (node.type === NodeType.File || node.type === NodeType.Attachment || node.type === NodeType.Event) {
       const file = this.app.vault.getAbstractFileByPath(node.type === NodeType.Event ? node.sourcePath! : node.id);
       if (file instanceof TFile) this.app.workspace.getLeaf("tab").openFile(file);
@@ -2784,6 +3044,11 @@ export class Graph3DView extends ItemView {
 
   private showHoverPreview(node: GraphNode, event: PointerEvent) {
     if (!this.plugin.settings.hoverPreview) return;
+    if (this.settings.hoverPreviewMode === "docked") { // fork: docked panel, no Obsidian popover
+      const c = this.dockContentFor(node);
+      if (c) this.dock?.request(c);
+      return;
+    }
     if (node.type !== NodeType.File && node.type !== NodeType.Event) return;
     const link = node.type === NodeType.Event ? node.sourcePath! : node.id; // fork: the todo's note
     const pop = this.hoverPopover;
@@ -2804,6 +3069,7 @@ export class Graph3DView extends ItemView {
   }
 
   private endHoverPreview() {
+    if (this.settings.hoverPreviewMode === "docked" && !this.hoverPopover) return; // fork: the panel keeps the last note
     const pop = this.hoverPopover;
     if (pop) {
       pop.onTarget = false;
@@ -2864,6 +3130,7 @@ export class Graph3DView extends ItemView {
       });
       this.instancedRenderer.updateNodeColors(colorMap);
       this.labelRenderer?.setNodeColors(labelColors);
+      if (this.thumbRenderer?.count) this.thumbRenderer.setNodeColors(labelColors); // fork
 
       const linkHighlightColor = this.settings.useThemeColors
         ? this.getCssColor("--graph-node-focused", this.settings.colorHighlight)
@@ -2923,6 +3190,12 @@ export class Graph3DView extends ItemView {
       // not project material — kept out of a tag (project) view unless asked
       if (!this.settings.showPeople && node.type === NodeType.File && this.isPersonNote(node.id)) return false;
       return node.tags?.some((tag) => tag.toLowerCase() === tagToMatch) ?? false;
+    }
+    if (filter.type === "prop") {
+      // fork: frontmatter property, `key=a|b` like the colour groups' `prop:` (negation: see filterPredicate)
+      if (node.type !== NodeType.File) return false;
+      const p = A.parseProp(filter.value);
+      return this.frontmatterMatches(node.id, p.key, p.values);
     }
     return false;
   }
@@ -3096,17 +3369,10 @@ export class Graph3DView extends ItemView {
     const hasActiveFilters = activeFilters.length > 0;
     const lowerCaseSearch = searchQuery ? searchQuery.toLowerCase() : "";
 
+    // fork: positive filters are OR-ed as before, negated ones (`!prop: sidtyp=tom`) exclude
+    const passesFilters = A.filterPredicate(activeFilters, (node: GraphNode, f) => this.matchesFilter(node, f as Filter));
     const isNodeMatch = (node: GraphNode): boolean => {
-      if (hasActiveFilters) {
-        let filterPassed = false;
-        for (let i = 0; i < activeFilters.length; i++) {
-          if (this.matchesFilter(node, activeFilters[i])) {
-            filterPassed = true;
-            break;
-          }
-        }
-        if (!filterPassed) return false;
-      }
+      if (passesFilters && !passesFilters(node)) return false;
 
       if (lowerCaseSearch) {
         let nodeContentLower = "";
@@ -3131,7 +3397,7 @@ export class Graph3DView extends ItemView {
       this.settings.showScopeTag
         ? []
         : activeFilters
-            .filter((f) => f.type === "tag")
+            .filter((f) => f.type === "tag" && !f.negate)
             .map((f) => `#${f.value.trim().replace(/^#/, "").toLowerCase()}`),
     );
     const isTypeVisible = (node: GraphNode): boolean => {
@@ -3314,6 +3580,16 @@ export class Graph3DView extends ItemView {
       this.labelRenderer.clear();
       this.labelRenderer = null;
     }
+    // fork: thumbnails, lightbox, docked preview
+    this.thumbRenderer?.dispose();
+    this.thumbRenderer = null;
+    void this.thumbCache?.dispose();
+    this.thumbCache = null;
+    this.lightbox?.destroy();
+    this.lightbox = null;
+    this.dock?.destroy();
+    this.dock = null;
+    this.imageFileCache.clear();
     if (this.messageEl) {
       this.messageEl.remove();
     }
