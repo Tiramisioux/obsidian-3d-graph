@@ -4,6 +4,7 @@ import { Graph3DView, VIEW_TYPE_3D_GRAPH } from "./src/view";
 import { Graph3DSettingsTab } from "./src/settings";
 import VaultStruktur from "./src/fork/vault_struktur"; // fork: the vault tree contract (vendored library)
 import { scopeFilters } from "./src/fork/scope"; // fork: the pure scope rules of "Open in 3D graph"
+import { parseGraphBlock } from "./src/fork/analog"; // fork: the ```3d-graf block (pure)
 
 export default class Graph3DPlugin extends Plugin {
 	settings: Graph3DPluginSettings;
@@ -109,6 +110,46 @@ export default class Graph3DPlugin extends Plugin {
 			},
 		});
 
+		// fork (analog view): the analog notes as a timeline of thumbnails, preview docked lower right.
+		// Command id `new-3d-graph-tiramisioux:open-analog` — the note-ingest hub links to it.
+		this.addCommand({
+			id: "open-analog",
+			name: "Visa analoga anteckningar i 3D",
+			callback: () =>
+				this.openScope({
+					filters: [
+						{ type: "prop", value: "typ=analog anteckning", enabled: true },
+						{ type: "prop", value: "sidtyp=tom", enabled: true, negate: true },
+					],
+					neighbors: true,
+					focusId: null,
+					options: { timeline: true, thumbnails: true, docked: true },
+				}),
+		});
+
+		// fork: ```3d-graf — one button that opens a scope in the graph:
+		//   filter: prop: typ=analog anteckning   (repeatable; path: / tag: / prop: / !prop: …)
+		//   tidslinje: på   miniatyrer: på   grannar: på|av   knapp: Visa i 3D
+		this.registerMarkdownCodeBlockProcessor("3d-graf", (source, el) => {
+			const spec = parseGraphBlock(source);
+			if (spec.errors.length) {
+				el.createEl("div", { cls: "setting-item-description", text: `3d-graf: förstår inte ${spec.errors.map((e) => `"${e}"`).join(", ")}` });
+			}
+			const button = el.createEl("button", { cls: "mod-cta", text: spec.label });
+			button.addEventListener("click", () => {
+				if (!spec.filters.length) {
+					new Notice("3d-graf: ingen filter-rad");
+					return;
+				}
+				void this.openScope({
+					filters: spec.filters as Filter[],
+					neighbors: spec.neighbors,
+					focusId: null,
+					options: { timeline: spec.timeline || undefined, thumbnails: spec.thumbnails || undefined, docked: spec.thumbnails || undefined },
+				});
+			});
+		});
+
 		this.addCommand({
 			id: "open-3d-graph-view",
 			name: "Open 3d graph",
@@ -170,6 +211,13 @@ export default class Graph3DPlugin extends Plugin {
 	async showInGraph(file: TAbstractFile) {
 		const scope = await this.scopeFor(file);
 		if (!scope) return;
+		await this.activateView();
+		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH)[0];
+		if (leaf?.view instanceof Graph3DView) await leaf.view.showScope(scope);
+	}
+
+	/** fork: open the graph view and show a scope (filters + optional switches) in it */
+	async openScope(scope: Parameters<Graph3DView["showScope"]>[0]) {
 		await this.activateView();
 		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_3D_GRAPH)[0];
 		if (leaf?.view instanceof Graph3DView) await leaf.view.showScope(scope);

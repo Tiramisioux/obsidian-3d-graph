@@ -85,6 +85,8 @@ export class InstancedGraphRenderer {
 
   private nodeCount = 0;
   private nodeScales: Float32Array = new Float32Array(0);
+  /** fork: nodes drawn as thumbnails instead — sphere hidden and not pickable */
+  private hidden: Uint8Array = new Uint8Array(0);
   private nodeBucketMap: { shape: NodeShape; localIndex: number }[] = [];
   private edges: EdgeData[] = [];
 
@@ -372,6 +374,19 @@ export class InstancedGraphRenderer {
     this.lineColorsAttr.needsUpdate = true;
   }
 
+  /** fork: hide the spheres of these nodes (thumbnail nodes); null = show all */
+  public setHiddenNodes(mask: Uint8Array | null): void {
+    this.hidden = mask ?? new Uint8Array(0);
+    for (const bucket of this.shapeBuckets.values()) {
+      if (!bucket.scaleAttr) continue;
+      const arr = bucket.scaleAttr.array as Float32Array;
+      bucket.indices.forEach((g, local) => {
+        arr[local] = this.hidden[g] ? 0 : this.nodeScales[g];
+      });
+      bucket.scaleAttr.needsUpdate = true;
+    }
+  }
+
   public getNodeIndexAtRay(raycaster: THREE.Raycaster, positions: Float32Array): number | null {
     if (this.nodeCount === 0) return null;
 
@@ -381,6 +396,7 @@ export class InstancedGraphRenderer {
     let closestIdx: number | null = null;
 
     for (let i = 0; i < this.nodeCount; i++) {
+      if (this.hidden[i]) continue; // fork
       const base = i * stride;
       const sx = positions[base];
       const sy = positions[base + 1];
@@ -471,6 +487,7 @@ export class InstancedGraphRenderer {
 
     this.nodeCount = 0;
     this.nodeScales = new Float32Array(0);
+    this.hidden = new Uint8Array(0);
     this.nodeBucketMap = [];
     this.nodeColors = [];
     this.edges = [];

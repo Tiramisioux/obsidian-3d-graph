@@ -236,6 +236,11 @@ export class InstancedLabelRenderer {
   private slotLabel = new Int32Array(0); // slot → label
   private visibleCount = 0;
   private style: LabelStyle | null = null;
+  /** fork: labels left out (thumbnail nodes) — 1 = no label; index = node index */
+  private suppressed: Uint8Array | null = null;
+  /** fork: label box replaced by a thumbnail's — [w, h, centre above node] per node, w ≤ 0 = none */
+  private boxOverride: Float32Array | null = null;
+  private extraLift: Float32Array | null = null;
 
   // Frustum & raycast occlusion reusable objects
   private projScreenMatrix = new THREE.Matrix4();
@@ -251,6 +256,21 @@ export class InstancedLabelRenderer {
     const ctx = this.atlasCanvas.getContext("2d", { willReadFrequently: false });
     if (!ctx) throw new Error("Failed to create 2D canvas context for label atlas");
     this.atlasCtx = ctx;
+  }
+
+  /** fork: leave out the labels of these nodes (null = none); takes effect with the next pass */
+  public setSuppressed(mask: Uint8Array | null) {
+    this.suppressed = mask;
+  }
+
+  /** fork: the box a node takes in the separation pass instead of its label (a thumbnail) */
+  /** fork: extra lift per node (index = node index) — a label above its node's thumbnail */
+  public setExtraLift(lift: Float32Array | null) {
+    this.extraLift = lift;
+  }
+
+  public setBoxOverride(boxes: Float32Array | null) {
+    this.boxOverride = boxes;
   }
 
   /** fork: label under a ray — intersects the ray with each drawn label's
@@ -669,8 +689,13 @@ export class InstancedLabelRenderer {
       const dst = i * 3;
       const label = this.labels[i];
 
+      if (this.suppressed && this.suppressed[i]) { // fork: thumbnail node without a label
+        opacities[i] = 0.0;
+        continue;
+      }
+
       const x = positions[src];
-      const y = positions[src + 1] + label.size * 0.6 + 2.0 + (label.lift || 0); // Place above node
+      const y = positions[src + 1] + label.size * 0.6 + 2.0 + (label.lift || 0) + (this.extraLift ? this.extraLift[i] : 0); // Place above node
       const z = positions[src + 2];
 
       trans[dst] = x;
@@ -765,6 +790,10 @@ export class InstancedLabelRenderer {
       b[i * 3] = this.labelScale[i * 2];
       b[i * 3 + 1] = this.labelScale[i * 2 + 1];
       b[i * 3 + 2] = label.size * 0.6 + 2.0 + (label.lift || 0); // as in updateVisibilityAndOcclusion
+      const o = this.boxOverride;
+      if (o && o.length >= n * 3 && o[i * 3] > 0) { // fork: a thumbnail's box
+        b[i * 3] = o[i * 3]; b[i * 3 + 1] = o[i * 3 + 1]; b[i * 3 + 2] = o[i * 3 + 2];
+      }
     }
     return b;
   }
@@ -792,5 +821,8 @@ export class InstancedLabelRenderer {
     this.labels = [];
     this.labelCount = 0;
     this.visibleCount = 0;
+    this.suppressed = null;
+    this.boxOverride = null;
+    this.extraLift = null;
   }
 }
