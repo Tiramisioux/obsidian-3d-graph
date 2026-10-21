@@ -575,3 +575,9 @@
 	overflow-y: auto;
 	padding: 8px 14px;
 }
+
+/* fork: with the docked preview on, the switch panel takes at most the upper ~42 % of the view
+   (it scrolls), so the dock always has room below it */
+.graph-3d-docked .graph-3d-switch-panel {
+	max-height: calc(42% - 56px);
+}

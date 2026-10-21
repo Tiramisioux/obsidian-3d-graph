@@ -59,7 +59,7 @@ export class DockedPreview {
       const start = this.currentSize(), x0 = e.clientX, y0 = e.clientY;
       const move = (ev: PointerEvent) => {
         const r = this.parent.getBoundingClientRect();
-        const s = A.dockSizeFromDrag(start, ev.clientX - x0, ev.clientY - y0, r.width, r.height);
+        const s = A.dockSizeFromDrag(start, ev.clientX - x0, ev.clientY - y0, r.width, r.height, this.reservedTop());
         this.applySize(s.w, s.h);
       };
       const up = () => {
@@ -74,11 +74,16 @@ export class DockedPreview {
 
     this.ro = new ResizeObserver(() => this.layout());
     this.ro.observe(parent);
+    // the switch panel (top right) is never covered: the room below it limits the height, and the
+    // panel folding / unfolding re-fits the dock
+    const panel = parent.querySelector(".graph-3d-switch-panel");
+    if (panel) this.ro.observe(panel);
     this.layout();
   }
 
   /** show or hide the whole panel (mode docked on/off) */
   setVisible(v: boolean) {
+    this.parent.toggleClass("graph-3d-docked", v); // the switch panel then leaves room below it (styles.css)
     if (v) { this.el.style.display = ""; this.layout(); } else this.el.style.display = "none";
   }
 
@@ -121,11 +126,18 @@ export class DockedPreview {
     this.el.style.height = `${h}px`;
   }
 
+  /** px from the view's top that the dock must stay below: the switch panel's bottom edge + 8 */
+  private reservedTop(): number {
+    const panel = this.parent.querySelector(".graph-3d-switch-panel") as HTMLElement | null;
+    if (!panel || panel.offsetParent === null) return 0;
+    return panel.getBoundingClientRect().bottom - this.parent.getBoundingClientRect().top + 8;
+  }
+
   /** the saved size clamped to the view now; collapsed = header only */
   private layout() {
     const r = this.parent.getBoundingClientRect();
     const want = this.host.size();
-    const s = A.clampDockSize(want.w, want.h, r.width, r.height);
+    const s = A.clampDockSize(want.w, want.h, r.width, r.height, this.reservedTop());
     const collapsed = this.host.collapsed();
     this.el.style.width = `${s.w}px`;
     this.el.style.height = collapsed ? "" : `${s.h}px`;

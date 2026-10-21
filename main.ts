@@ -121,9 +121,9 @@ export default class Graph3DPlugin extends Plugin {
 						{ type: "prop", value: "typ=analog anteckning", enabled: true },
 						{ type: "prop", value: "sidtyp=tom", enabled: true, negate: true },
 					],
-					neighbors: true,
+					neighbors: false, // the cards sit in deterministic lanes; hubs and their links would only haze them
 					focusId: null,
-					options: { timeline: true, thumbnails: true, docked: true },
+					options: { timeline: true, thumbnails: true, docked: true, tags: false },
 				}),
 		});
 
@@ -145,7 +145,7 @@ export default class Graph3DPlugin extends Plugin {
 					filters: spec.filters as Filter[],
 					neighbors: spec.neighbors,
 					focusId: null,
-					options: { timeline: spec.timeline || undefined, thumbnails: spec.thumbnails || undefined, docked: spec.thumbnails || undefined },
+					options: { timeline: spec.timeline || undefined, thumbnails: spec.thumbnails || undefined, docked: spec.thumbnails || undefined, tags: spec.tags ?? undefined },
 				});
 			});
 		});
