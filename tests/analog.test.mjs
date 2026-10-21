@@ -200,4 +200,49 @@ t("docked size: default 500×680, capped at 45 % × 80 % of the view", () => {
 	assert.deepEqual(A.dockSizeFromDrag({ w: 400, h: 500 }, 5000, 5000, 2000, 1500), { w: 240, h: 220 });
 });
 
+t("taggar line + dock reserved top", () => {
+	assert.equal(A.parseGraphBlock("taggar: av").tags, false);
+	assert.equal(A.parseGraphBlock("taggar: på").tags, true);
+	assert.equal(A.parseGraphBlock("filter: tag: x").tags, null);
+	// switch panel bottom at 300 px in a 1000 px view: room = 1000 - 300 - 10
+	assert.deepEqual(A.clampDockSize(500, 680, 2000, 1000, 300), { w: 500, h: 680 });
+	assert.deepEqual(A.clampDockSize(500, 680, 2000, 1000, 400), { w: 500, h: 590 });
+	assert.deepEqual(A.dockSizeFromDrag({ w: 400, h: 500 }, -50, -600, 2000, 1000, 400), { w: 450, h: 590 });
+});
+
+t("thumbLanes: collections in lanes, same-day pages in a grid", () => {
+	const D = 86400000;
+	const rows = [];
+	// A: days 0..10 (3 pages on day 0), B overlaps A (parallel lane), C starts after A ends (reuses lane 0)
+	for (let k = 0; k < 7; k++) rows.push({ key: "A", day: 0, order: k });
+	rows.push({ key: "A", day: 10 * D, order: 1 });
+	rows.push({ key: "B", day: 5 * D, order: 1 }, { key: "B", day: 12 * D, order: 2 });
+	rows.push({ key: "C", day: 20 * D, order: 1 });
+	const o = { cols: 3, cellW: 10, cellH: 14, gap: 2 };
+	const r = A.thumbLanes(rows, o);
+	assert.equal(r.lanes, 2);
+	assert.equal(r.centres.get("A"), r.centres.get("C"));
+	assert.notEqual(r.centres.get("A"), r.centres.get("B"));
+	const laneOf = (i) => Math.round(r.across[i] / r.laneWidth * 2) ; // not exact: use groups below
+	// A and C share a lane, B has the other one
+	const cA = r.across[0], cC = r.across[rows.length - 1], cB = r.across[8];
+	assert.ok(Math.abs(cB - cA) > 30, "B beside A");
+	assert.ok(Math.abs(cC - cA) < 14, "C reuses A's lane");
+	// 7 same-day pages: columns -12, 0, 12 around the lane centre, rows 0, 16, 32 along
+	assert.deepEqual([0, 1, 2].map((i) => r.across[i] - r.across[1]), [-12, 0, 12]);
+	assert.deepEqual([0, 3, 6].map((i) => r.along[i]), [0, 16, 32]);
+	assert.equal(r.along[7], 0);
+	// deterministic and no two cards of one day share a cell
+	const r2 = A.thumbLanes(rows, o);
+	assert.deepEqual(Array.from(r2.across), Array.from(r.across));
+	const cells = new Set(rows.map((x, i) => x.key + x.day + ":" + r.across[i] + ":" + r.along[i]));
+	assert.equal(cells.size, rows.length);
+	// 4 300 pages are laid out fast
+	const big = [];
+	for (let i = 0; i < 4300; i++) big.push({ key: "K" + (i % 58), day: Math.floor(i / 4) * D, order: i });
+	const t0 = performance.now();
+	A.thumbLanes(big, o);
+	console.log(`  (thumbLanes of 4300: ${(performance.now() - t0).toFixed(1)} ms)`);
+});
+
 console.log(`cases: ${n}`);

@@ -20,8 +20,8 @@ export const PAGE_SIZE = 2048;
 export const CELL_W = 68;
 export const CELL_H = 88;
 const MAX_UNIFORM_PAGES = 8; // sampler uniforms in the shader
-const LOAD_CONCURRENCY = 4;
-const READY_MAX = 24;
+const LOAD_CONCURRENCY = 10; // Obsidian's main thread is busy while the layout runs: each IndexedDB read waits for it (~100 ms), so keep many in flight
+const READY_MAX = 48;
 const UPLOADS_PER_FRAME = 16;
 const UPLOAD_BUDGET_MS = 3;
 const RESORT_MS = 350;
@@ -478,15 +478,16 @@ export class ThumbnailRenderer {
   }
 
   private launchLoads() {
-    while (this.inflight < LOAD_CONCURRENCY && this.ready.length + this.inflight < READY_MAX) {
+    const batch: number[] = [];
+    while (this.inflight + batch.length < LOAD_CONCURRENCY && this.ready.length + this.inflight + batch.length < READY_MAX) {
       while (this.cursor < this.order.length && this.state[this.order[this.cursor]] !== 0) this.cursor++;
-      if (this.cursor >= this.order.length) return;
+      if (this.cursor >= this.order.length) break;
       const t = this.order[this.cursor];
       // a cell for it: a free one, else the farthest loaded thumbnail's (only if farther than t)
       let slot = this.alloc.alloc();
       if (slot === null) {
         const v = A.evictionVictim(this.keys, this.loadedSet, this.keys[t]);
-        if (v < 0) return; // nothing to give: the atlas holds the nearest ones already
+        if (v < 0) break; // nothing to give: the atlas holds the nearest ones already
         slot = this.slot[v];
         this.slot[v] = -1;
         this.state[v] = 0;
@@ -497,18 +498,22 @@ export class ThumbnailRenderer {
       this.slot[t] = slot;
       this.state[t] = 1;
       this.cursor++;
-      this.inflight++;
-      void this.load(t, this.gen);
+      batch.push(t);
     }
+    if (!batch.length) return;
+    this.inflight += batch.length;
+    // the cache lookups of the whole batch in one IndexedDB transaction
+    const recs = this.cache ? this.cache.getMany(batch.map((t) => this.items[t])) : null;
+    batch.forEach((t, i) => void this.load(t, this.gen, recs ? recs.then((a) => a[i]) : null));
   }
 
-  private async load(t: number, gen: number) {
+  private async load(t: number, gen: number, rec: Promise<import("./thumbnail-cache").CachedThumb | null> | null) {
     const it = this.items[t];
     let bmp: ImageBitmap | null = null;
     let aspect = DEFAULT_ASPECT;
     try {
       const t0 = performance.now();
-      const cached = await this.cache?.get(it.path, it.mtime, it.size);
+      const cached = rec ? await rec : null;
       if (cached) {
         bmp = await createImageBitmap(cached.blob);
         aspect = cached.w / Math.max(1, cached.h);

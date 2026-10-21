@@ -76,10 +76,10 @@ function parseSwitch(v) {
 
 /**
  * lines: `filter: <filter line>` (repeatable), `tidslinje: på`, `miniatyrer: på`,
- * `grannar: på|av` (default på), `knapp: <label>`. Unknown lines go to `errors`.
+ * `grannar: på|av` (default på), `taggar: på|av` (default: leave the user's setting), `knapp: <label>`. Unknown lines go to `errors`.
  */
 function parseGraphBlock(source) {
-	const out = { filters: [], timeline: false, thumbnails: false, neighbors: true, label: "Visa i 3D", errors: [] };
+	const out = { filters: [], timeline: false, thumbnails: false, neighbors: true, tags: null, label: "Visa i 3D", errors: [] };
 	for (const raw of String(source == null ? "" : source).split(/\r?\n/)) {
 		const line = raw.trim();
 		if (!line || line.startsWith("#")) continue;
@@ -89,11 +89,12 @@ function parseGraphBlock(source) {
 		if (key === "filter") {
 			const f = parseFilterLine(val);
 			if (f) out.filters.push(f); else out.errors.push(line);
-		} else if (key === "tidslinje" || key === "miniatyrer" || key === "grannar") {
+		} else if (key === "tidslinje" || key === "miniatyrer" || key === "grannar" || key === "taggar") {
 			const b = parseSwitch(val);
 			if (b === null) { out.errors.push(line); continue; }
 			if (key === "tidslinje") out.timeline = b;
 			else if (key === "miniatyrer") out.thumbnails = b;
+			else if (key === "taggar") out.tags = b;
 			else out.neighbors = b;
 		} else if (key === "knapp") {
 			if (val) out.label = val;
@@ -224,6 +225,55 @@ function evictionVictim(keys, loaded, requesterKey) {
 	return best;
 }
 
+// ---- timeline lanes for thumbnails -------------------------------------------------
+
+/**
+ * Deterministic sideways layout of cards on a timeline. Collections run side by side in lanes
+ * (interval scheduling over each collection's first..last day: the lowest lane free over its whole
+ * span, so parallel notebooks run in parallel and one notebook stays in one lane); the pages of one
+ * collection on one day form a small grid of `cols` columns (rows run along the time axis).
+ * rows: [{ key, day (ms), order }]. Returns per row { across, along } in world units:
+ * `across` = position across the time axis, `along` = offset added to the date's position.
+ */
+function thumbLanes(rows, opts) {
+	const cols = Math.max(1, opts.cols | 0), cw = opts.cellW + opts.gap, ch = opts.cellH + opts.gap;
+	const colls = new Map();
+	rows.forEach((r, i) => {
+		let c = colls.get(r.key);
+		if (!c) colls.set(r.key, (c = { key: r.key, first: r.day, last: r.day, idx: [], lane: 0 }));
+		c.first = Math.min(c.first, r.day);
+		c.last = Math.max(c.last, r.day);
+		c.idx.push(i);
+	});
+	const list = [...colls.values()].sort((a, b) => a.first - b.first || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+	const laneEnd = [];
+	for (const c of list) {
+		let l = laneEnd.findIndex((end) => end < c.first);
+		if (l < 0) { l = laneEnd.length; laneEnd.push(c.last); } else laneEnd[l] = c.last;
+		c.lane = l;
+	}
+	const laneW = cols * cw + cw; // a gap column between lanes
+	const across = new Float64Array(rows.length), along = new Float64Array(rows.length);
+	const centre = (laneEnd.length - 1) / 2;
+	for (const c of list) {
+		const byDay = new Map();
+		for (const i of c.idx) {
+			const a = byDay.get(rows[i].day);
+			if (a) a.push(i); else byDay.set(rows[i].day, [i]);
+		}
+		for (const idx of byDay.values()) {
+			idx.sort((a, b) => rows[a].order - rows[b].order || a - b);
+			idx.forEach((i, k) => {
+				across[i] = (c.lane - centre) * laneW + ((k % cols) - (cols - 1) / 2) * cw;
+				along[i] = Math.floor(k / cols) * ch;
+			});
+		}
+	}
+	const centres = new Map();
+	for (const c of list) centres.set(c.key, (c.lane - centre) * laneW);
+	return { across, along, lanes: laneEnd.length, laneWidth: laneW, centres };
+}
+
 // ---- picking -------------------------------------------------------------------
 
 /**
@@ -289,16 +339,18 @@ const DOCK_DEFAULT = { w: 500, h: 680 };
 const DOCK_MIN = { w: 240, h: 220 };
 const DOCK_MAX_FRAC = { w: 0.45, h: 0.8 }; // of the graph view
 
-/** size limited to [min, share of the view]; a view smaller than the minimum wins over the minimum */
-function clampDockSize(w, h, viewW, viewH) {
-	const maxW = Math.max(1, Math.floor(viewW * DOCK_MAX_FRAC.w)), maxH = Math.max(1, Math.floor(viewH * DOCK_MAX_FRAC.h));
+/** size limited to [min, share of the view]; `reservedTop` px at the top (the switch panel and a gap) and
+ *  10 px at the bottom are not available to the panel; a view smaller than the minimum wins over the minimum */
+function clampDockSize(w, h, viewW, viewH, reservedTop = 0) {
+	const maxW = Math.max(1, Math.floor(viewW * DOCK_MAX_FRAC.w));
+	const maxH = Math.max(1, Math.min(Math.floor(viewH * DOCK_MAX_FRAC.h), Math.floor(viewH - reservedTop - 10)));
 	const cl = (v, lo, hi) => Math.round(Math.min(hi, Math.max(Math.min(lo, hi), Number.isFinite(v) ? v : lo)));
 	return { w: cl(w, DOCK_MIN.w, maxW), h: cl(h, DOCK_MIN.h, maxH) };
 }
 
 /** corner handle at the panel's upper left (the panel is anchored lower right): dragging left/up grows it */
-function dockSizeFromDrag(start, dx, dy, viewW, viewH) {
-	return clampDockSize(start.w - dx, start.h - dy, viewW, viewH);
+function dockSizeFromDrag(start, dx, dy, viewW, viewH, reservedTop = 0) {
+	return clampDockSize(start.w - dx, start.h - dy, viewW, viewH, reservedTop);
 }
 
 module.exports = {
@@ -307,6 +359,7 @@ module.exports = {
 	IMAGE_EXT, linkpathOf, isImagePath, imageLinkCandidates, collectionName,
 	atlasGrid, slotRect, fitCell, SlotAllocator,
 	OUTSIDE, priorityKeys, loadOrder, evictionVictim,
+	thumbLanes,
 	pickQuad,
 	fitScale, fitState, clampPan, zoomAt, neighbourId,
 	DOCK_DEFAULT, DOCK_MIN, DOCK_MAX_FRAC, clampDockSize, dockSizeFromDrag,

@@ -11,7 +11,7 @@ export function filterPredicate<N>(filters: AnalogFilter[], matchOne: (node: N, 
 
 export function parseSwitch(v: string): boolean | null;
 export function parseGraphBlock(source: string): {
-	filters: AnalogFilter[]; timeline: boolean; thumbnails: boolean; neighbors: boolean; label: string; errors: string[];
+	filters: AnalogFilter[]; timeline: boolean; thumbnails: boolean; neighbors: boolean; tags: boolean | null; label: string; errors: string[];
 };
 
 export const IMAGE_EXT: string[];
@@ -49,5 +49,10 @@ export function neighbourId(ids: string[], current: string, delta: number): stri
 export const DOCK_DEFAULT: { w: number; h: number };
 export const DOCK_MIN: { w: number; h: number };
 export const DOCK_MAX_FRAC: { w: number; h: number };
-export function clampDockSize(w: number, h: number, viewW: number, viewH: number): { w: number; h: number };
-export function dockSizeFromDrag(start: { w: number; h: number }, dx: number, dy: number, viewW: number, viewH: number): { w: number; h: number };
+export function clampDockSize(w: number, h: number, viewW: number, viewH: number, reservedTop?: number): { w: number; h: number };
+export function dockSizeFromDrag(start: { w: number; h: number }, dx: number, dy: number, viewW: number, viewH: number, reservedTop?: number): { w: number; h: number };
+
+export function thumbLanes(
+	rows: { key: string; day: number; order: number }[],
+	opts: { cols: number; cellW: number; cellH: number; gap: number },
+): { across: Float64Array; along: Float64Array; lanes: number; laneWidth: number; centres: Map<string, number> };

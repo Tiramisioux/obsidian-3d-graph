@@ -58,6 +58,34 @@ export class ThumbnailCache {
     return rec;
   }
 
+  /** several at once in one transaction (one round trip instead of one per thumbnail) */
+  async getMany(keys: { path: string; mtime: number; size: number }[]): Promise<(CachedThumb | null)[]> {
+    const db = await this.db;
+    if (!db || !keys.length) return keys.map(() => null);
+    return new Promise((resolve) => {
+      const out: (CachedThumb | null)[] = keys.map(() => null);
+      let left = keys.length;
+      const fin = () => { if (--left === 0) resolve(out); };
+      try {
+        const store = db.transaction(STORE, "readonly").objectStore(STORE);
+        keys.forEach((k, i) => {
+          const req = store.get(k.path);
+          req.onsuccess = () => {
+            const rec = req.result as CachedThumb | undefined;
+            if (rec && rec.mtime === k.mtime && rec.size === k.size) {
+              out[i] = rec;
+              if (Date.now() - rec.used > DAY) this.put({ ...rec, used: Date.now() }); // LRU stamp
+            }
+            fin();
+          };
+          req.onerror = fin;
+        });
+      } catch {
+        resolve(out);
+      }
+    });
+  }
+
   /** queue a write; writes are batched into one transaction */
   put(rec: CachedThumb) {
     this.pending.push(rec);

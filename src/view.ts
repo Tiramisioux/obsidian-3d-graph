@@ -546,6 +546,11 @@ export class Graph3DView extends ItemView {
    *  switches show the live state, and settled physics wakes up again */
   public onSettingsSaved() {
     this.switchPanel?.refresh();
+    // fork: a change to what is shown (attachments, tags, filters, thumbnails …) reloads the data —
+    // the settings tab and the switches already did it themselves, a plain saveSettings() did not
+    if (this.isGraphInitialized && this.computeDataSig() !== this.dataSig) {
+      void this.updateData({ useCache: true, reheat: true });
+    }
     this.applyThumbnailSettings(); // fork
     this.applyDockVisibility(); // fork
     this.wakePhysics();
@@ -841,6 +846,43 @@ export class Graph3DView extends ItemView {
     return null;
   }
 
+  /** fork: across-the-axis target per node (NaN = none): thumbnail cards in a timeline are laid out
+   *  side by side per collection, the pages of one day in a small grid (analog.js thumbLanes) —
+   *  deterministic, instead of hoping label separation spreads thousands of cards */
+  private timelineAcross: Float32Array = new Float32Array(0);
+
+  private initThumbLanes(nodes: GraphNode[], dates: (number | null)[]) {
+    this.timelineAcross = new Float32Array(nodes.length).fill(NaN);
+    if (!this.settings.thumbnails || !this.settings.timelineLayout) return;
+    const rows: { key: string; day: number; order: number }[] = [];
+    const at: number[] = [];
+    nodes.forEach((n, i) => {
+      const d = dates[i];
+      if (d === null || n.type !== NodeType.File || !this.imageFileOf(n)) return;
+      const f = this.app.vault.getAbstractFileByPath(n.id);
+      const fm = f instanceof TFile ? this.app.metadataCache.getFileCache(f)?.frontmatter : undefined;
+      const sida = Number(fm?.sida);
+      const day = new Date(d); day.setHours(0, 0, 0, 0);
+      rows.push({ key: fm?.samling ? A.collectionName(fm.samling) : "", day: day.getTime(), order: Number.isFinite(sida) ? sida : d });
+      at.push(i);
+    });
+    if (!rows.length) return;
+    const h = this.settings.thumbnailSize;
+    const r = A.thumbLanes(rows, { cols: 3, cellW: h * 0.75, cellH: h, gap: 1.5 });
+    const flip = this.settings.timelineAxis === "horizontal" ? -1 : 1; // first lane on top
+    r.centres.forEach((c, key) => r.centres.set(key, c * flip));
+    at.forEach((i, k) => {
+      this.timelineAcross[i] = flip * r.across[k];
+      if (!isNaN(this.timelineTargets[i])) this.timelineTargets[i] += r.along[k];
+    });
+    // a collection's hub sits in the middle of its lane (else the hubs pile up beside the cards)
+    nodes.forEach((n, i) => {
+      if (n.type !== NodeType.File || Number.isFinite(this.timelineAcross[i])) return;
+      const c = r.centres.get(n.name.replace(/\s+hub$/i, ""));
+      if (c !== undefined) this.timelineAcross[i] = c;
+    });
+  }
+
   /** per-node target heights + the chronological order, for the current data */
   private initTimeline(nodes: GraphNode[]) {
     this.clearStoryline();
@@ -856,6 +898,7 @@ export class Graph3DView extends ItemView {
     dates.forEach((d, i) => {
       if (d !== null) this.timelineTargets[i] = sign * ((d - lo) / span - 0.5) * L;
     });
+    this.initThumbLanes(nodes, dates);
     // fork: date → time-axis position, for the grid; a line reshapes it
     this.timeToAxis = (t) => sign * ((t - lo) / span - 0.5) * L;
     this.lineRamp = 0;
@@ -983,6 +1026,11 @@ export class Graph3DView extends ItemView {
         const cur = horiz ? -positions[ia] : positions[ia];
         const next = cur + (ty - cur) * k;
         positions[ia] = horiz ? -next : next;
+        const across = this.timelineAcross[i]; // fork: thumbnail lanes
+        if (!line && Number.isFinite(across)) {
+          positions[ip] += (across - positions[ip]) * 0.35;
+          positions[i * 4 + 2] *= 0.7; // cards of a lane layout stand in one plane (front-on, no depth haze)
+        }
         if (line) {
           positions[ip] *= 1 - k;
           positions[i * 4 + 2] *= 1 - k;
@@ -1349,6 +1397,16 @@ export class Graph3DView extends ItemView {
   }
 
   private thumbHeightApplied = 0;
+  /** settings that decide which nodes exist — a change reloads the data (see onSettingsSaved) */
+  private dataSig = "";
+  private pendingUpdate: { useCache?: boolean; reheat?: boolean } | null = null;
+  private computeDataSig(): string {
+    const st = this.settings;
+    return JSON.stringify([
+      st.showAttachments, st.showTags, st.hideOrphans, st.showNeighboringNodes, st.searchQuery, st.filters,
+      st.showEvents, st.eventTag, st.showScopeTag, st.showPeople, st.thumbnails, st.thumbnailKeys,
+    ]);
+  }
 
   /** (re)build the thumbnail quads for the current nodes, or tear them down when the setting is off */
   private rebuildThumbnails() {
@@ -1403,6 +1461,7 @@ export class Graph3DView extends ItemView {
       this.thumbHeightApplied = st.thumbnailSize;
       this.thumbRenderer.setHeight(st.thumbnailSize);
       this.syncThumbBoxes();
+      if (st.timelineLayout && this.currentNodes.length) this.initTimeline(this.currentNodes); // lanes follow the card size
     }
   }
 
@@ -1486,7 +1545,7 @@ export class Graph3DView extends ItemView {
     neighbors: boolean;
     focusId: string | null;
     /** fork (analog view): switch these on together with the scope; unset = leave the user's setting */
-    options?: { timeline?: boolean; thumbnails?: boolean; docked?: boolean };
+    options?: { timeline?: boolean; thumbnails?: boolean; docked?: boolean; tags?: boolean };
   }) {
     this.settings.filters = scope.filters;
     this.settings.showNeighboringNodes = scope.neighbors;
@@ -1494,20 +1553,37 @@ export class Graph3DView extends ItemView {
     const o = scope.options;
     if (o?.timeline !== undefined) this.settings.timelineLayout = o.timeline;
     if (o?.thumbnails !== undefined) this.settings.thumbnails = o.thumbnails;
+    if (o?.tags !== undefined) this.settings.showTags = o.tags;
     if (o?.docked) {
       this.settings.hoverPreviewMode = "docked";
       this.settings.hoverPreview = true;
     }
+    if (o?.timeline) { // a readable timeline: spread (not a line), no storyline through thousands of cards
+      this.settings.timelineShape = "spread";
+      if (o.thumbnails) {
+        this.settings.storyline = false;
+        // cards: time runs left → right (oldest left), collections in lanes below each other — a
+        // landscape view holds that far better than a tall column
+        this.settings.timelineAxis = "horizontal";
+        this.settings.timelineNewestTop = false;
+        this.settings.timelineLength = Math.max(this.settings.timelineLength, 3600);
+        this.settings.timelineGrid = "off"; // month labels of 15 years would be one black bar
+      }
+    }
+    this.dataSig = this.computeDataSig(); // the explicit update below reloads; saveSettings must not start a second one
     await this.plugin.saveSettings();
     // a freshly opened view initialises asynchronously — wait for it (max ~5 s)
     for (let i = 0; i < 50 && !this.isGraphInitialized; i++) await new Promise((r) => window.setTimeout(r, 100));
     while (this.isUpdating) await new Promise((r) => window.setTimeout(r, 100));
     if (this.isSettingsPanelOpen()) this.renderSettingsPanel();
     await this.updateData({ useCache: false, reheat: true });
-    window.setTimeout(() => {
-      if (scope.focusId) this.flyToNode(scope.focusId);
-      else this.fitView(800);
-    }, 2200);
+    if (scope.focusId) window.setTimeout(() => this.flyToNode(scope.focusId!), 2200);
+    else if (o?.thumbnails) {
+      // fork: look at the timeline head-on, then frame the cards once the layout has settled
+      if (o.timeline && !this.settings.flat2D) this.graph?.cameraPosition({ x: 0, y: 0, z: 1500 }, { x: 0, y: 0, z: 0 }, 0);
+      this.fitAfterTicks = 150;
+    }
+    else window.setTimeout(() => this.fitView(800), 2200);
   }
 
   /** camera to a node, at a distance that keeps its neighbourhood in view */
@@ -2204,10 +2280,14 @@ export class Graph3DView extends ItemView {
   ) {
     const { useCache = true, reheat = false, isFirstLoad = false } = options;
 
-    if (!this.isGraphInitialized || this.isUpdating) {
+    if (!this.isGraphInitialized) return;
+    if (this.isUpdating) {
+      // fork: not lost — run again once the current pass is done
+      this.pendingUpdate = { useCache, reheat: reheat || this.pendingUpdate?.reheat };
       return;
     }
     this.isUpdating = true;
+    this.dataSig = this.computeDataSig();
 
     this.updatePreprocessedGroups();
 
@@ -2369,7 +2449,7 @@ export class Graph3DView extends ItemView {
             edgeDataList,
             this.settings.nodeSize,
             linkColor,
-            0.6,
+            this.settings.thumbnails ? 0.1 : 0.6, // fork: thousands of hub links would haze the cards
           );
           this.labelRenderer?.initLabels(newData.nodes, this.settings, 4);
           this.initTimeline(newData.nodes);
@@ -2434,6 +2514,9 @@ export class Graph3DView extends ItemView {
       console.error("3D Graph: An error occurred during updateData:", error);
     } finally {
       this.isUpdating = false;
+      const next = this.pendingUpdate;
+      this.pendingUpdate = null;
+      if (next) void this.updateData(next);
     }
   }
 
@@ -3463,6 +3546,29 @@ export class Graph3DView extends ItemView {
       if (!connectedNodeIds || connectedNodeIds.has(nodeId)) {
         const node = allNodesMap.get(nodeId);
         if (node) nodesToShow.push(node);
+      }
+    }
+
+    // fork: with thumbnails on, the scan an image attachment node stands for is already drawn on the
+    // note that embeds it — drop that attachment node together with its links
+    if (this.settings.thumbnails) {
+      const sources = new Set<string>();
+      for (const n of nodesToShow) {
+        if (n.type !== NodeType.File) continue;
+        const img = this.imageFileOf(n);
+        if (img) sources.add(img.path);
+      }
+      if (sources.size) {
+        const dropped = nodesToShow.filter((n) => n.type === NodeType.Attachment && sources.has(n.id));
+        if (dropped.length) {
+          const gone = new Set(dropped.map((n) => n.id));
+          const keepNodes = nodesToShow.filter((n) => !gone.has(n.id));
+          const keepLinks = linksToShow.filter((l) => !gone.has(l.source) && !gone.has(l.target));
+          nodesToShow.length = 0;
+          nodesToShow.push(...keepNodes);
+          linksToShow.length = 0;
+          linksToShow.push(...keepLinks);
+        }
       }
     }
 
