@@ -2,7 +2,7 @@
 
 A fork of [**New 3D Graph**](https://github.com/Apoo711/obsidian-3d-graph) by Aryan Gupta, with fixes and extra ways to present your vault. Everything from the original works the same; this fork adds what's listed below.
 
-> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.19 · **based on:** 2.8.1
+> **Plugin id:** `new-3d-graph-tiramisioux` · **name in Obsidian:** *New 3D Graph (Tiramisioux fork)* · **version:** 2.8.1-tiramisioux.20 · **based on:** 2.8.1
 > It has its own id on purpose: a community-store update of the original can never overwrite it.
 
 ## What this fork adds

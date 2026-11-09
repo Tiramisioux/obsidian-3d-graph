@@ -1,4 +1,4 @@
-// vendored from obsidian-vault-functions/lib/vault_struktur.js sha1:9bd95153d88fe1bfa121217c48046a04b33a6b14 — do not edit here
+// vendored from obsidian-vault-functions/lib/vault_struktur.js sha1:8ca7f793d75000359583a3f72f75f41f45a77075 — do not edit here
 // Reference library for the vault tree contract (version 1) - JS twin of vault_struktur.py.
 //
 // Same API, identical snake_case names, tested against the same vault_struktur_cases.json.
@@ -166,7 +166,8 @@ const VaultStruktur = (function () {
     }
 
     _reserved(name) {
-      return name[0] === "_" || name[0] === "." || name === this._notes || name === this._analog;
+      // "_" + caps (_PROJ) is a pinned project/kontext, sorted first; "_archive", "_misc" stay reserved
+      return (name[0] === "_" && !is_caps(name)) || name[0] === "." || name === this._notes || name === this._analog;
     }
 
     _is_name(name) {
